@@ -6,6 +6,7 @@ import type { ToolDefinition, ToolExecutionInput, ToolExecutionResult } from '@d
 import type { ActorContext, AccessService, EnterpriseIdentityService, RuntimeBindingService } from 'workdsh-contracts';
 import { EnterpriseProfileError } from './snapshot-authority.js';
 import { assertFixedEnterpriseComposition, ENTERPRISE_TOOL_NAMES } from './profile-policy.js';
+import type {} from './authority-service.js';
 
 export interface SourceIdentity { readonly materialId: string; readonly revisionId: string; readonly sha256: string }
 export interface PinnedSnapshot extends SourceIdentity { readonly text: string }
@@ -92,11 +93,19 @@ export class EnterpriseProfileIngress extends Service {
     });
     ctx.on('agent/disposed', payload => { this.#agentCutoffs.get(payload.agent)?.(); this.#agentCutoffs.delete(payload.agent); this.#agentGenerations.delete(payload.agent); });
     this.registerTools();
-    // The reviewed fragment has a fixed tool inventory; late registrations/restrictions
-    // must abort admitted original caller signals before the registry resolves a body.
-    ctx.on('tools/change', () => this.cutoff());
+    // Official restrict/preset scope disposal also emits tools/change. A legitimate
+    // fixed Agent composition may leave the inventory unchanged; inspect the actual
+    // definitions rather than treating the notification itself as an expansion.
+    ctx.on('tools/change', () => {
+      if (!this.fixedTools() || ctx.agents.list().some(agent => !this.fixedTools(agent))) this.cutoff();
+    });
   }
   cutoff = (): void => { this.#lifetime.abort(new EnterpriseProfileError('afos/profile-cutoff')); };
+  private fixedTools(agent?: Agent): boolean {
+    const names = this.ctx.tools.schemas(agent).map(tool => tool.name).sort();
+    return JSON.stringify(names) === JSON.stringify([...ENTERPRISE_TOOL_NAMES].sort())
+      && ENTERPRISE_TOOL_NAMES.every(name => this.ctx.tools.get(name, agent) === this.#definitions.get(name));
+  }
 
   /** Trusted direct callers fuse authority into the registry's original immutable caller signal. */
   executeTool = async (input: ToolExecutionInput): Promise<ToolExecutionResult> => {
@@ -167,6 +176,11 @@ export class EnterpriseProfileIngress extends Service {
     const signal = AbortSignal.any([callerSignal, this.#lifetime.signal]);
     try {
       signal.throwIfAborted();
+      if (endpoint.startsWith('afos/drafts/')) {
+        const runtime = this.ctx.get('afosDraftRuntime');
+        if (!runtime) throw new EnterpriseProfileError('afos/profile-desktop-integration-unverified');
+        return await runtime.invoke(endpoint, payload, signal);
+      }
       if (!['afos/createSession', 'afos/readSnapshot', 'afos/renderDraft'].includes(endpoint)) throw new EnterpriseProfileError('afos/profile-endpoint-denied');
       if (Buffer.byteLength(JSON.stringify(payload) ?? '') > 80 * 1024) throw new EnterpriseProfileError('afos/profile-request-too-large');
       if (endpoint === 'afos/createSession') {

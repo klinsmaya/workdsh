@@ -1,84 +1,81 @@
-# Fixed enterprise Profile integration
+# Fixed enterprise Profile integration · 0.1.0-alpha.1
 
-Version `0.1.0-alpha.1` is an inactive AFOS D01/D05/D07/D08 integration component.
-It uses the published DSH `0.1.7-rc.2` Connection RPC registry and Tools pipeline;
-it does not create an Agent loop, Session engine, model router or MCP transport.
-The personal WorkDSH bundle remains separate.
+This optional AFOS component implements the fixed enterprise core through the
+published DSH 0.1.7-rc.2 Loader, Session, AgentLoop, preset, Skill, LLM, Tools,
+Storage and Connection services. It adds enterprise business ownership and
+admission; those official services still own execution and transport.
 
-`SnapshotIdentityAuthority` consumes a private Main callback for the fixed
-`identity.current(projectId)` response. It verifies `afos.identity.v1`, the exact
-issuer/subject/organization/device binding and project, current read permission,
-server revision and UTC expiry no more than five seconds ahead on every call. It maps that evidence to the existing
-canonical identity contract with a display-only member role and organization ID as
-the display name. It grants only read/use of the actor's own personal Session;
-business resources and edit/manage always return deny. The existing identity
-provider still owns actor evidence and the existing Access service owns durable
-Session owner records. A failed, malformed or changed server response permanently
-cuts off this adapter. The callback receives no caller-selected token, URL or role.
+`bootEnterpriseCore()` generates a private JSON-only Loader composition in the
+Main-protected account/project namespace, mounts the exact reviewed inventory,
+checks required services, and refuses generic Gateway, file, shell, MCP, PTC,
+settings and SessionController services. It does not load user patches or a
+default bundle. Generated configuration is unique per start and removed by its
+lifecycle owner. Browser authentication uses official Connection on loopback.
+The implemented drafts Client module is included for official discovery; the
+complete native Client/Conversation composition and desktop activation remain
+unverified. `assertEnterpriseDesktopActivation()` continues to refuse activation.
 
-`fixedEnterpriseComposition()` is a reviewed inventory fragment, **not a runnable
-full Desktop Profile or generated Loader patch**. Its assertion accepts only exact
-plain data; it rejects extra plugins, tools, user patches, PTC, gateway and public
-bind addresses. It admits no shell, stdio MCP, browser, raw filesystem, config,
-plugin installation or general controller capability. Native execution remains
-unavailable. The Host launcher must assemble only this reviewed set and inject
-trusted namespace storage configuration and bridge services before listening.
-Complete official Agent/Client/preset assembly and pack validation remain pending.
-`assertEnterpriseDesktopActivation()` therefore always refuses activation.
+Main privately injects current project authority, pinned material access and
+Run capabilities. `SnapshotIdentityAuthority` verifies the full
+issuer/subject/organization/device/project binding, server authorization revision
+and expiry (at most five seconds ahead). Existing WorkDSH Identity owns actor
+proof and Access owns durable Session ownership. Display member/organization
+labels grant no extra rights. A malformed, changed or failed authority response
+cuts off that authority adapter.
 
-`EnterpriseProfileIngress` exclusively owns the existing Connection `/api` RPC
-interceptor. It exposes only `afos/createSession`, `afos/readSnapshot` and
-`afos/renderDraft`. Each payload has exact fields and bounded IDs/text/references;
-generic Session restore/create, files, terminal, config, settings, plugin and MCP
-RPCs return a stable denial. Creation delegates to a trusted adapter using the
-existing Session Access bridge, then verifies its returned owner. Reads and draft
-preparation require a current provider-minted actor, persisted owner and Access
-decision. The injected Main bridge must independently verify the current run and
-its exact pinned material hashes; it is not a generic network/filesystem proxy.
-Text snapshots are hash-verified again and drafts remain `local-draft`.
-There is no approval, archive, business save or external write RPC/tool here.
+`EnterpriseDraftRuntime` creates each Session through official `agents.create`,
+mounts the fixed preset and bundled Markdown Skill, and binds its current actor
+and Main Run before publication. Failed publication releases its admission.
+The two tools are `afos_read_snapshot` and `afos_render_draft`: Main rechecks the
+current server Run, exact pins and hashes; render persists only a local draft.
+Official Session turn events supply the execution projection. Agent-loop request
+provenance is checked in the original public `llm/stream` waterfall before
+official projection; the adapter also verifies the exact live Agent and Main
+Session/Run binding. OAuth tokens and provider secrets never reach the Client.
 
-Only `afos_read_snapshot` and `afos_render_draft` are registered in official Tools.
-A global monotonic guard rejects every other capability, missing Agents, failed
-authorization and same-name scope shadows. Tool calls require the exact live
-official AgentRegistry object, with an original signal registered by public
-`agent/pre-step` or minted by the trusted dispatcher. Evidence is invalidated when
-that Agent lifecycle is disposed. After this package registers its fixed tools,
-any further `tools/change` synchronously cuts off the Host fragment, including a
-late scope shadow installed by an execution wrapper. Each definition's body rechecks current
-authority after asynchronous execution wrappers, then passes the combined cutoff
-signal to the business effect owner and rejects late results. The trusted
-`executeTool()` seam fuses authority into the original `ToolExecutionInput.signal`
-before official dispatch, so later signal replacement cannot detach it. For an
-official loop tool call, the pre-tool check subscribes its call-window authority
-signal to public `Agent.cancel()`, which aborts the loop's original turn signal.
-The call listener is removed on the Tools result and service disposal. A separate
-stable Host cutoff listener calls `Agent.cancel()` between tools and during model
-work; it has no actor freshness timer and is released on Agent/service disposal.
-Tests exercise
-the actual Tools machinery and AgentRegistry with fixture authority/cancellable Agent handles;
-actual Agent-loop integration and remote account revocation delivery remain to be
-verified. Existing actor freshness is one second by default, so the tool window is a
-conservative call deadline, not a whole-run lifetime policy.
+`EnterpriseProfileIngress` owns the existing Connection `/api` interceptor.
+Seven fixed `afos/drafts/*` UI operations cover state, material listing, snapshot,
+start, edit, cancel and explicit human archive. Legacy fixed read/render endpoints
+remain bounded; generic method names and extra fields are refused. The UI archive
+request must include the confirmed current SHA256; Main compares it before
+Recovery captures the intent, queries the receipt, rechecks after awaits and
+performs any authorized commit. Archive is never an Agent tool. This local fixture
+implementation does not authorize an external production write or P2 approval.
 
-The public Gateway already occupies the sole RPC interceptor, and its WebSocket
-and direct dispatch bypass HTTP `connection/request`. Public WebServer has no
-global upgrade tap. This package rejects an already mounted Gateway and its fixed
-inventory excludes that service and generic controllers. It **does not retrofit a
-fully mounted default Profile** or claim all existing raw HTTP/WS/Remote routes are
-closed. No UI buttons are used as the security boundary. Full raw-route closure,
-trusted launcher/namespace wiring, real NocoBase identity and target desktop tests
-remain prerequisites for activation and formal AT-03/13–18/20/22–23/33/35–39.
+Tool admission requires the original live official Agent, current actor, Session
+owner, Access decision and original loop signal. Definition identity prevents
+same-name scope shadows; inventory expansion cuts off dispatch. Legitimate
+preset restriction/disposal notifications preserve the unchanged fixed inventory.
+Registered hooks, cancellation listeners, adapters and handles have official
+lifecycle owners. Main revokes capabilities synchronously and coalesces Host stop;
+internal callers do not await disposal of their own task. Account changes and
+new Host activation still await the old Host's exit. Each Host start invalidates
+callbacks captured by its predecessor.
 
-From `workdsh-web`, build `workdsh-contracts`, then run the package `build`,
-`typecheck` and `test` scripts using pinned Corepack pnpm `10.34.5`. Twenty offline
-tests cover fixed composition, current-authority mapping, raw RPC denial, scoped
-tool shadows, cancellation replacement, revoked body entry, late response and
-disposal, late registration and Agent lifecycle evidence. Three published-API probes document the real Gateway/WS admission gap.
-Raw command outputs, exit codes, source hashes and independent review are under
-`evidence/`; no fixture or Linux result is a formal desktop AT pass.
+Draft content is bounded to the public 64 KiB UTF-8 limit. JSON admission allows
+its worst-case escaping; material snapshots have a separate 1 MiB limit. The
+initial recovery store is bounded to eight drafts per namespace. Offline/new
+account recovery and a complete native UI still need integration; no browser
+outbox or second execution state source is added.
 
-Rollback by removing this optional package/configuration and its private authority
-adapter from the enterprise composition. Do not remove personal Home, existing
-Session owner records, namespace outbox, credentials or user drafts. No remote
-push, deployment, production migration or external business write was performed.
+From `workdsh-web`, build the contracts and this package, then run its `test` and
+`typecheck` scripts. From the independent `enterprise/plugin-agent-bridge`
+workspace, `corepack pnpm test:profile` builds the Profile's workspace prerequisites
+and runs seven real official-runtime integration cases using fixture identity,
+ACL persistence and model replies. These cover actual tool turns, durable draft
+and hash confirmation, authenticated HTTP and physical WS refusal, cancellation,
+current Run policy, revocation at model dispatch, failed admission, repeated boot,
+and escaped-content size. Fixture/Linux evidence is not target desktop acceptance.
+DSH is pinned; official Cordis peers ~4.0.4 still differ from WorkDSH's 4.0.3
+consumer override and need packaged compatibility validation.
+
+Supporting tasks: D01/D04/D05/D07/D08/D09/D10. Formal AT-03/07/08/10/11/13–18/20/
+22–23/31/33–47 are not promoted by these headless checks. Native sandbox,
+Windows/macOS, real IdP/NocoBase/SQL/vendor, complete Client assembly, signatures,
+licenses and the complete security gate remain open. P1G3 has not passed.
+
+Rollback by withdrawing the optional enterprise composition and reverting the
+local source/lock changes, then repeating frozen installs and consumer tests.
+Preserve personal Profiles, Sessions, owner records, namespace drafts, credentials
+and server receipts. No upstream, production, merge, release or deployment action
+is implied.

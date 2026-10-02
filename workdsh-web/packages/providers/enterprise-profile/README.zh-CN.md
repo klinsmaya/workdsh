@@ -1,63 +1,60 @@
-# 固定企业 Profile 接线
+# 固定企业 Profile 接线 · 0.1.0-alpha.1
 
-版本 `0.1.0-alpha.1` 是未激活的 AFOS D01/D05/D07/D08 集成组件。复用已发布
-DSH `0.1.7-rc.2` 的 Connection RPC registry 与 Tools pipeline，不新增 Agent
-循环、Session 引擎、模型路由或 MCP 传输。个人 WorkDSH bundle 保留独立。
+本 AFOS 可选组件通过已发布 DSH 0.1.7-rc.2 的 Loader、Session、AgentLoop、
+preset、Skill、LLM、Tools、Storage 和 Connection 实现固定企业核心。
+新增部分只负责企业业务归属和准入；执行与传输仍由官方服务拥有。
 
-`SnapshotIdentityAuthority` 从 Main 私有回调读取固定
-`identity.current(projectId)`。每次校验 `afos.identity.v1`、完整
-issuer/subject/organization/device 绑定、项目、当前 read 权限、服务端修订和 UTC
-有效期（最多未来五秒），再映射既有 canonical 身份合同。member 仅作显示，组织名称显示组织 ID。
-只允许 actor 自身 personal Session 的 read/use；业务资源及 edit/manage 均拒绝。
-既有身份提供方仍拥有 actor 证据，既有 Access 服务拥有持久 Session owner。
-服务端失败、畸形或变化响应永久关闭本适配器；回调不接收调用者选择的 Token、URL
-或角色。
+`bootEnterpriseCore()` 在 Main 保护的账号/项目 namespace 生成私有 JSON-only
+Loader 组合，装配精确清单并检查必要服务，拒绝通用 Gateway、文件、Shell、
+MCP、PTC、settings 和 SessionController。不会加载用户 patch 或默认 bundle。
+每次启动生成唯一配置，由生命周期 owner 删除。浏览器认证复用官方 loopback
+Connection。已实现的草稿 Client 模块加入官方发现；完整原生 Client/Conversation
+装配与桌面激活仍未验证，`assertEnterpriseDesktopActivation()` 继续拒绝激活。
 
-`fixedEnterpriseComposition()` 是已审查的清单片段，**不是可运行的完整 Desktop
-Profile 或生成的 Loader patch**。断言只接受完全相同的普通数据，拒绝附加插件、
-工具、用户 patch、PTC、gateway 和公网监听地址。清单没有 Shell、stdio MCP、
-浏览器、原始文件系统、配置、插件安装或通用 controller 能力；本机执行为
-unavailable。Host launcher 必须只装配获准集合，在监听前注入可信命名空间存储配置
-和 bridge 服务。完整官方 Agent/Client/preset 装配及制品验证未完成，因此
-`assertEnterpriseDesktopActivation()` 始终拒绝激活。
+Main 私下提供当前项目权限、固定资料和 Run 能力。`SnapshotIdentityAuthority`
+验证完整 issuer/subject/organization/device/project 绑定、服务端权限修订及
+最多未来五秒的有效期。既有 WorkDSH Identity 拥有 actor 证据，Access 拥有持久
+Session owner。显示用 member/组织标签不增加权限；畸形、变化或失败响应关闭
+该权限适配器。
 
-`EnterpriseProfileIngress` 独占既有 Connection `/api` RPC interceptor，只提供
-`afos/createSession`、`afos/readSnapshot`、`afos/renderDraft`。参数必须是准确字段及
-有限 ID、正文、来源引用；通用 Session restore/create、文件、terminal、config、
-settings、plugin 和 MCP RPC 返回固定拒绝。创建委托使用既有 Session Access bridge
-的可信适配器，再校验返回 owner。读取和草稿准备必须使用当前 provider-minted
-actor、持久 owner 和 Access 决定。注入的 Main bridge 必须另行校验当前 run 与固定
-材料摘要，不能成为泛用网络/文件代理。文本快照再校验 SHA，成果保持 local-draft。
-本包不提供审批、归档、业务保存或对外写 RPC/tool。
+`EnterpriseDraftRuntime` 通过官方 `agents.create` 创建 Session，在发布前挂载
+固定 preset、随包 Markdown Skill 并绑定当前 actor 与 Main Run。发布失败会释放
+占用。两个固定工具是 `afos_read_snapshot` 和 `afos_render_draft`：Main 重查当前
+服务端 Run、精确 pin 与摘要；render 只保存本地草稿。执行投影来自官方 Session
+turn 事件。模型调用在公开 `llm/stream` 原始 envelope 上验证官方循环标记，
+避免官方投影复制对象后丢失标记；Adapter 再查真实活跃 Agent 与 Main Session/Run。
+OAuth Token 与模型密钥均不进入 Client。
 
-官方 Tools 只注册 `afos_read_snapshot`、`afos_render_draft`。全局单向 guard 拒绝其余
-能力、缺失 Agent、失败授权及同名 scope 遮蔽。调用必须使用官方 AgentRegistry 中的
-准确 live 对象，最初信号须由公开 agent/pre-step 登记或由可信 dispatcher 建立；
-Agent 生命周期卸载即令证据失效。自身固定工具登记完成后，任何 tools/change 同步
-关闭本 Host 片段，包含异步包装器迟到安装的同名 scope 遮蔽。实际工具主体在所有异步执行包装器后
-重新检查当前权限，将融合后的 cutoff 信号交给实际业务效果 owner，并拒绝迟到结果。
-可信 `executeTool()` 在官方 dispatch 前先将权威信号融入原始
-`ToolExecutionInput.signal`，后续信号替换不能移除它。官方循环的每次工具调用在
-pre-tool 检查后，将本次授权窗口信号接到公开 `Agent.cancel()`，终止原始 turn 信号。
-Tools result 与服务卸载移除本次调用监听。另有独立稳定 Host cutoff 监听，在两次工具间
-及模型工作时调用 Agent.cancel，不带 actor 新鲜度计时器，并在 Agent/服务卸载时释放。
-测试使用真实 Tools、AgentRegistry 和 fixture 权威/可取消 Agent 句柄；真实 Agent-loop
-集成与服务端账号撤权传递仍待验证。既有 actor 新鲜度默认一秒，这是保守的工具调用
-时限，不是整次任务的生命周期策略。
+`EnterpriseProfileIngress` 拥有既有 Connection `/api` interceptor。七个固定
+`afos/drafts/*` UI 操作负责状态、资料列表、快照、开始、编辑、取消与明确人工
+归档；旧固定 read/render 入口仍有界。通用方法名与额外字段被拒绝。归档必须
+携带用户确认的当前 SHA256；Main 同步比较，再由 Recovery 捕获意图、先查询
+回执、在 await 后重查意图并执行有权限的提交。归档不是 Agent 工具。本地夹具
+实现不授权外部生产写入，也不代表 P2 审批已实现。
 
-官方 Gateway 已占唯一 RPC interceptor，其 WebSocket 和直接调用绕过 HTTP
-`connection/request`；公开 WebServer 没有全局升级 tap。本包拒绝已装载 Gateway，
-固定清单排除它和通用 controller。本包**不改造已经装载的默认 Profile**，不宣称
-现有全部原始 HTTP/WS/Remote 路由已封闭，也不把隐藏按钮作为边界。完整原始入口、
-可信 launcher/命名空间、真实 NocoBase 身份和目标桌面验证仍是激活与正式
-AT-03/13–18/20/22–23/33/35–39 的前置。
+工具准入要求原版活跃 Agent、当前 actor、Session owner、Access 决策和原始
+循环 signal。定义对象身份防止同名 scope shadow；能力清单扩张关闭 dispatch。
+正常 preset restrict/dispose 发出的通知在清单未变时可以保留。Hooks、取消监听、
+Adapter 与 handles 均由官方生命周期拥有。Main 同步撤销能力并合并 Host 停止，
+内部调用不会等待自身任务被销毁；换账号与新 Host 仍须等待旧 Host 退出。
+每次 Host 启动使前一 Host 捕获的回调失效。
 
-在 `workdsh-web` 使用固定 Corepack pnpm `10.34.5`，先构建 `workdsh-contracts`，再运行
-本包 build、typecheck、test。二十项离线测试覆盖固定清单、当前身份映射、原始 RPC
-拒绝、scope 遮蔽、信号替换、撤权后主体入口、迟到响应、卸载、迟到注册及 Agent 生命周期证据。三项已发布 API 探针
-记录实际 Gateway/WS 准入缺口。原始命令输出、退出码、源摘要和独立审查在
-`evidence/`；fixture 或 Linux 结果均不计为正式桌面 AT PASS。
+草稿正文复用公开 64 KiB UTF-8 限额，JSON 准入覆盖最坏转义膨胀；资料快照另限
+1 MiB。初版 recovery store 每个 namespace 最多八份草稿。离线/新账号恢复与
+完整原生 UI 仍需接线；没有浏览器 outbox 或第二套执行状态真源。
 
-回滚只移除企业组合中这个可选包/配置与私有权威适配器，保留个人 Home、既有 Session
-owner、命名空间 outbox、凭据和用户草稿。未执行远程 push、部署、生产迁移或对外
-业务写入。
+在 `workdsh-web` 编译契约与本包后运行 `test`、`typecheck`。在独立
+`enterprise/plugin-agent-bridge` 执行 `corepack pnpm test:profile`，先构建 Profile
+workspace 前置，再运行七项真实官方运行时集成检查。身份、ACL 持久层和模型回复
+为夹具；覆盖真实工具 turn、持久草稿/哈希确认、已认证 HTTP 和物理 WS 拒绝、
+取消、当前 Run policy、模型 dispatch 时撤权、失败占用释放、重复启动及转义内容
+边界。夹具/Linux 证据不算目标桌面验收。DSH 保持锁定；官方 Cordis ~4.0.4 peer
+与消费方 4.0.3 override 的偏离仍须安装包兼容验证。
+
+支持任务 D01/D04/D05/D07/D08/D09/D10。正式 AT-03/07/08/10/11/13–18/20/22–23/
+31/33–47 不因这些检查提升。原生沙箱、Windows/macOS、真实 IdP/NocoBase/SQL/模型、
+完整 Client 装配、签名、许可和整体安全门槛仍未关闭；P1G3 未通过。
+
+回滚为撤下可选企业组合、revert 本地源码/锁，再按锁安装并重跑消费路径检查。
+保留个人 Profile、Session、owner、namespace 草稿、凭据及服务端回执。
+此说明不涉及上游修改、生产操作、合并、发布或部署。

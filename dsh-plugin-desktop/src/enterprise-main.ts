@@ -1,6 +1,27 @@
 import { accountNamespace, DesktopAuth, RefreshTokenVault, type EnterpriseAuthConfig } from './desktop-auth.ts'
 import { EnterpriseBroker, type CurrentAuthoritySnapshot, type EnterpriseProject, type RunAuthorization, type SourceRef } from './enterprise-broker.ts'
-import { EnterpriseRecoveryStore, type DraftRecord, type RecoveryLayout, type RecoveryStoreOptions, type RecoveryTransport } from './enterprise-recovery.ts'
+import { EnterpriseRecoveryStore, type DraftRecord, type OfficialSessionSummaryEvent, type RecoveryLayout, type RecoveryStoreOptions, type RecoveryTransport } from './enterprise-recovery.ts'
+
+/** Private trusted Host callback. Only official Agent setup receives a publication lease. */
+export interface EnterpriseSessionBindingLease { commit(): void; dispose(): void }
+export interface EnterpriseHostBusinessCapabilities {
+  currentAuthority(signal: AbortSignal): Promise<CurrentAuthoritySnapshot>
+  authorize(refs: readonly SourceRef[], operationId: string, signal: AbortSignal): Promise<RunAuthorization>
+  releaseRunAdmission(runId: string): void
+  prepareSessionBinding(runId: string, sessionId: string, signal: AbortSignal): Promise<EnterpriseSessionBindingLease>
+  sessionRun(sessionId: string, signal: AbortSignal): Promise<RunAuthorization>
+  readPinnedSnapshot(sessionId: string, ref: Pick<SourceRef, 'materialId' | 'revisionId'>, signal: AbortSignal): Promise<SourceRef & { readonly text: string }>
+  prepareDraft(sessionId: string, content: string, refs: readonly SourceRef[], signal: AbortSignal): Promise<{ readonly text: string; readonly sources: readonly SourceRef[]; readonly status: 'local-draft' }>
+  modelBytes(sessionId: string, request: unknown, signal: AbortSignal): AsyncIterable<Uint8Array>
+  projectSessionEvent(sessionId: string, event: OfficialSessionSummaryEvent): void
+  /** Only the UI RPC owner receives these; never expose them as Agent tools. */
+  drafts(): readonly DraftRecord[]
+  editDraft(draftId: string, content: string): DraftRecord
+  markCancellation(sessionId: string, stopped: boolean): void
+  materials(signal: AbortSignal): ReturnType<EnterpriseMainSession['materials']>
+  readRevision(ref: SourceRef, signal: AbortSignal): ReturnType<EnterpriseMainSession['readRevision']>
+  archiveFromUser(draftId: string, expectedSha256: string, signal: AbortSignal): ReturnType<EnterpriseMainSession['archiveFromUser']>
+}
 
 export interface ManagedDesktopConfig {
   readonly contractVersion: 'afos.desktop-config.v1'
@@ -12,7 +33,7 @@ export interface EnterpriseHostLifecycle {
   /** The real Host/process owner must confirm exit before a new namespace may start. */
   stop(): Promise<void>
   capabilities(): Promise<{ readonly ingressValidated: boolean; readonly sandbox: 'full' | 'partial' | 'unavailable' }>
-  start(layout: RecoveryLayout, authority: CurrentAuthoritySnapshot, signal: AbortSignal): Promise<void>
+  start(layout: RecoveryLayout, authority: CurrentAuthoritySnapshot, signal: AbortSignal, business: EnterpriseHostBusinessCapabilities): Promise<void>
 }
 export class EnterpriseMainError extends Error {
   constructor(readonly code: string) { super(code) }
@@ -28,8 +49,10 @@ export class EnterpriseMainSession {
   private readonly auth: DesktopAuth
   private readonly broker: EnterpriseBroker
   private generation = 0
+  private hostGeneration = 0
   private lifetime = new AbortController()
   private mutationTail: Promise<unknown> = Promise.resolve()
+  private hostStop: Promise<void> | undefined
   private recovery: EnterpriseRecoveryStore | undefined
   private authority: CurrentAuthoritySnapshot | undefined
   private selectedProject: EnterpriseProject | undefined
@@ -39,7 +62,11 @@ export class EnterpriseMainSession {
   private authorizing = false
   private ready = false
   private readonly runs = new Map<string, RunAuthorization>()
+  private activeRunId: string | undefined
   private readonly snapshots = new Map<string, { readonly text: string } & SourceRef>()
+  private readonly sessionRuns = new Map<string, string>()
+  private readonly sessionDrafts = new Map<string, string>()
+  private readonly sessionLeases = new Map<string, symbol>()
   constructor(
     private readonly config: ManagedDesktopConfig,
     private readonly base: string,
@@ -59,6 +86,7 @@ export class EnterpriseMainSession {
   }
   private cutoff(): void {
     ++this.generation
+    ++this.hostGeneration
     this.lifetime.abort()
     this.lifetime = new AbortController()
     this.broker.close()
@@ -68,15 +96,26 @@ export class EnterpriseMainSession {
     this.selectedProject = undefined
     this.namespace = undefined
     this.runs.clear()
+    this.activeRunId = undefined
     this.authorizing = false
     this.ready = false
     this.snapshots.clear()
+    this.sessionRuns.clear()
+    this.sessionDrafts.clear()
+    this.sessionLeases.clear()
   }
   private current(generation: number): void { if (generation !== this.generation) fail('account-changed') }
   private mutate<T>(generation: number, work: () => Promise<T>): Promise<T> {
     const operation = this.mutationTail.then(async () => { this.current(generation); return work() })
     this.mutationTail = operation.catch(() => undefined)
     return operation
+  }
+  private stopHost(): Promise<void> {
+    if (this.hostStop) return this.hostStop
+    const stop = Promise.resolve().then(() => this.host.stop())
+    this.hostStop = stop
+    void stop.finally(() => { if (this.hostStop === stop) this.hostStop = undefined }).catch(() => undefined)
+    return stop
   }
   private signal(signal?: AbortSignal): AbortSignal { return AbortSignal.any([this.lifetime.signal, ...(signal ? [signal] : [])]) }
   private async prepareVaultNamespace(namespace: string, generation: number, signal: AbortSignal): Promise<void> {
@@ -99,7 +138,7 @@ export class EnterpriseMainSession {
     const generation = this.generation
     const combined = this.signal(signal)
     return this.mutate(generation, async () => {
-      await this.host.stop()
+      await this.stopHost()
       this.current(generation)
       await this.auth.login(combined)
       this.current(generation)
@@ -114,7 +153,7 @@ export class EnterpriseMainSession {
     const generation = this.generation
     const combined = this.signal(signal)
     return this.mutate(generation, async () => {
-      await this.host.stop()
+      await this.stopHost()
       this.current(generation)
       const project = await this.broker.selectProject(projectId, combined)
       this.current(generation)
@@ -141,7 +180,7 @@ export class EnterpriseMainSession {
     const generation = this.generation
     const combined = this.signal(signal)
     return this.mutate(generation, async () => {
-      await this.host.stop()
+      await this.stopHost()
       this.current(generation)
       if (binding.issuer !== this.config.auth.issuer) fail('account-mismatch')
       const namespace = accountNamespace(binding.issuer, binding.subject, binding.organizationId, binding.deviceId)
@@ -182,7 +221,10 @@ export class EnterpriseMainSession {
     } catch (error) {
       if (generation === this.generation && !signal?.aborted) {
         this.cutoff()
-        await this.host.stop()
+        // A Host caller may be the Agent task that disposal must drain. Revoke
+        // synchronously and let it settle before the lifecycle owner awaits exit.
+        // Every new account/project/start still awaits stopHost before activation.
+        void this.stopHost().catch(() => undefined)
       }
       throw error
     }
@@ -197,11 +239,15 @@ export class EnterpriseMainSession {
       combined.throwIfAborted()
       if (Date.parse(authority.expiresAt) <= Date.now()) fail('authority-expired')
       if (!capability.ingressValidated || capability.sandbox !== 'full') fail('profile-or-sandbox-unverified')
+      await this.stopHost()
+      this.current(generation); combined.throwIfAborted()
+      if (Date.parse(authority.expiresAt) <= Date.now()) fail('authority-expired')
+      ++this.hostGeneration
       if (!this.recovery) fail('select-project-required')
       // This owner must publish its process handle before awaiting readiness.
       // Serialize completion/cleanup before a switch can start another Host.
-      try { await this.host.start(this.recovery.layout, authority, combined); this.current(generation) }
-      catch (error) { await this.host.stop(); throw error }
+      try { await this.host.start(this.recovery.layout, authority, combined, this.hostBusiness(generation)); this.current(generation) }
+      catch (error) { await this.stopHost(); throw error }
     })
   }
   async materials(signal?: AbortSignal) {
@@ -228,13 +274,15 @@ export class EnterpriseMainSession {
     const combined = this.signal(signal)
     await this.currentAuthority(combined)
     this.current(generation)
-    if (this.runs.size || this.authorizing) fail('one-run-at-a-time')
+    if (this.activeRunId || this.authorizing) fail('one-run-at-a-time')
+    if (this.runs.size >= 8) fail('run-limit')
     this.authorizing = true
     try {
       const run = await this.broker.authorize(this.config.releaseId, refs, clientRequestId, combined)
       this.current(generation)
       if (run.policyRevision !== this.config.policyRevision) fail('policy-changed')
       this.runs.set(run.runId, run)
+      this.activeRunId = run.runId
       return run
     } finally { if (generation === this.generation) this.authorizing = false }
   }
@@ -247,6 +295,7 @@ export class EnterpriseMainSession {
     for await (const bytes of this.broker.modelBytes(request, combined)) { this.current(generation); combined.throwIfAborted(); yield bytes }
   }
   async createDraft(runId: string, sessionId: string, content: string, clientRequestId: string, signal?: AbortSignal): Promise<DraftRecord> {
+    if (this.sessionRuns.get(sessionId) !== runId) fail('session-run-unowned')
     const run = this.runs.get(runId)
     if (!run || !this.recovery) fail('run-not-owned')
     const inputSnapshots = run.inputRefs.map(ref => {
@@ -254,7 +303,116 @@ export class EnterpriseMainSession {
       if (!snapshot || snapshot.sha256 !== ref.sha256) fail('snapshot-required')
       return snapshot
     })
-    return this.recovery.createDraft({ run, sessionId, content, clientRequestId, inputSnapshots, generatedAt: new Date().toISOString() }, this.signal(signal))
+    const generation = this.generation
+    const draft = await this.recovery.createDraft({ run, sessionId, content, clientRequestId, inputSnapshots, generatedAt: new Date().toISOString() }, this.signal(signal))
+    this.current(generation)
+    this.sessionDrafts.set(sessionId, draft.draftId)
+    return draft
+  }
+  /** A captured account lifetime; Main never exports OAuth or a caller-selected endpoint. */
+  private hostBusiness(generation: number): EnterpriseHostBusinessCapabilities {
+    const hostGeneration = this.hostGeneration
+    const active = () => { this.current(generation); if (hostGeneration !== this.hostGeneration) fail('host-changed'); if (!this.ready || !this.recovery || !this.selectedProject) fail('select-project-required') }
+    const ownDraft = (draftId: string): DraftRecord => {
+      active()
+      const draft = this.recovery!.list().find(item => item.draftId === draftId && item.run.projectId === this.selectedProject!.id)
+      if (!draft) fail('draft-not-owned')
+      return draft
+    }
+    const sessionRun = async (sessionId: string, signal: AbortSignal): Promise<RunAuthorization> => {
+      active()
+      await this.currentAuthority(this.signal(signal)); active()
+      const run = this.runs.get(this.sessionRuns.get(sessionId) ?? '')
+      if (!run || run.projectId !== this.selectedProject!.id || Date.parse(run.expiresAt) <= Date.now()) fail('session-run-unowned')
+      await this.broker.restoreRun(run, this.signal(signal)); active()
+      return run
+    }
+    return Object.freeze({
+      currentAuthority: async (signal: AbortSignal) => { active(); const value = await this.currentAuthority(this.signal(signal)); active(); return value },
+      authorize: async (refs: readonly SourceRef[], operationId: string, signal: AbortSignal) => { active(); const value = await this.authorize(refs, operationId, this.signal(signal)); active(); return value },
+      releaseRunAdmission: (runId: string) => {
+        active()
+        if (!this.runs.has(runId) || this.sessionLeases.has(runId) || [...this.sessionRuns.values()].includes(runId)) fail('run-release-denied')
+        if (this.activeRunId === runId) this.activeRunId = undefined
+      },
+      prepareSessionBinding: async (runId: string, sessionId: string, signal: AbortSignal): Promise<EnterpriseSessionBindingLease> => {
+        active()
+        if (!bounded(sessionId) || this.sessionRuns.has(sessionId) || this.sessionLeases.has(runId)) fail('session-run-conflict')
+        const leaseId = Symbol('afos-session-publication')
+        this.sessionLeases.set(runId, leaseId)
+        let authority: CurrentAuthoritySnapshot
+        try { authority = await this.currentAuthority(this.signal(signal)); active() }
+        catch (error) { if (this.sessionLeases.get(runId) === leaseId) this.sessionLeases.delete(runId); throw error }
+        const run = this.runs.get(runId)
+        if (!run || this.activeRunId !== runId || this.sessionRuns.size || run.projectId !== this.selectedProject!.id) {
+          this.sessionLeases.delete(runId); fail('run-not-owned')
+        }
+        let committed = false, disposed = false
+        return Object.freeze({
+          commit: () => {
+            active(); signal.throwIfAborted()
+            if (disposed || committed || this.sessionLeases.get(runId) !== leaseId || this.sessionRuns.size || this.sessionRuns.has(sessionId)
+              || this.runs.get(runId) !== run || Date.parse(authority.expiresAt) <= Date.now() || Date.parse(run.expiresAt) <= Date.now()) fail('session-publication-denied')
+            this.sessionRuns.set(sessionId, runId); committed = true
+          },
+          dispose: () => {
+            disposed = true
+            if (generation === this.generation && this.sessionLeases.get(runId) === leaseId) {
+              this.sessionLeases.delete(runId)
+              if (this.sessionRuns.get(sessionId) === runId) this.sessionRuns.delete(sessionId)
+              if (this.activeRunId === runId) this.activeRunId = undefined
+            }
+          },
+        })
+      },
+      sessionRun,
+      readPinnedSnapshot: async (sessionId: string, ref: Pick<SourceRef, 'materialId' | 'revisionId'>, signal: AbortSignal) => {
+        const run = await sessionRun(sessionId, signal)
+        const pin = run.inputRefs.find(item => item.materialId === ref.materialId && item.revisionId === ref.revisionId)
+        if (!pin) fail('source-not-owned')
+        const snapshot = await this.readRevision(pin, this.signal(signal)); active()
+        return snapshot
+      },
+      prepareDraft: async (sessionId: string, content: string, refs: readonly SourceRef[], signal: AbortSignal) => {
+        const run = await sessionRun(sessionId, signal)
+        if (refs.length !== run.inputRefs.length || refs.some((ref, index) => {
+          const pin = run.inputRefs[index]
+          return !pin || ref.materialId !== pin.materialId || ref.revisionId !== pin.revisionId || ref.sha256 !== pin.sha256
+        })) fail('source-pins-mismatch')
+        const draftId = this.sessionDrafts.get(sessionId)
+        if (draftId) { ownDraft(draftId); this.recovery!.editDraft(draftId, content) }
+        else await this.createDraft(run.runId, sessionId, content, `draft-${run.runId}-${run.attempt}`, this.signal(signal))
+        active(); signal.throwIfAborted()
+        return Object.freeze({ text: content, sources: run.inputRefs, status: 'local-draft' as const })
+      },
+      modelBytes: async function* (this: EnterpriseMainSession, sessionId: string, request: unknown, signal: AbortSignal) {
+        const run = await sessionRun(sessionId, signal)
+        if (!request || typeof request !== 'object' || Array.isArray(request)) fail('model-run-mismatch')
+        const reference = (request as { run?: { runId?: unknown; attempt?: unknown } }).run
+        if (reference?.runId !== run.runId || reference.attempt !== run.attempt) fail('model-run-mismatch')
+        yield* this.modelBytes(request, this.signal(signal))
+      }.bind(this),
+      projectSessionEvent: (sessionId: string, event: OfficialSessionSummaryEvent) => {
+        active()
+        const draftId = this.sessionDrafts.get(sessionId), run = this.runs.get(this.sessionRuns.get(sessionId) ?? '')
+        if (draftId && run) this.recovery!.projectSessionEvent(draftId, sessionId, run.runId, run.attempt, event)
+      },
+      drafts: () => { active(); return this.recovery!.list().filter(item => item.run.projectId === this.selectedProject!.id) },
+      editDraft: (draftId: string, content: string) => { ownDraft(draftId); return this.recovery!.editDraft(draftId, content) },
+      markCancellation: (sessionId: string, stopped: boolean) => {
+        active(); const draftId = this.sessionDrafts.get(sessionId)
+        if (!draftId) fail('draft-not-owned')
+        ownDraft(draftId); this.recovery!.markCancellation(draftId, stopped)
+      },
+      materials: async (signal: AbortSignal) => { active(); const value = await this.materials(this.signal(signal)); active(); return value },
+      readRevision: async (ref: SourceRef, signal: AbortSignal) => { active(); const value = await this.readRevision(ref, this.signal(signal)); active(); return value },
+      archiveFromUser: async (draftId: string, expectedSha256: string, signal: AbortSignal) => {
+        if (!/^[a-f0-9]{64}$/u.test(expectedSha256) || ownDraft(draftId).sha256 !== expectedSha256) fail('draft-confirmation-changed')
+        // Recovery captures synchronously, then verifies the same intent again
+        // after each authorization/receipt await before dispatching a write.
+        const value = await this.archiveFromUser(draftId, this.signal(signal)); active(); return value
+      },
+    })
   }
   /** Explicit trusted user archive; not exported by the model/Host read capability facade. */
   async archiveFromUser(draftId: string, signal?: AbortSignal) {
@@ -288,7 +446,7 @@ export class EnterpriseMainSession {
     const cleanup = this.mutationTail.then(async () => {
       await this.auth.settleCredentialWrites()
       let stopFailed = false
-      try { await this.host.stop() } catch { stopFailed = true }
+      try { await this.stopHost() } catch { stopFailed = true }
       let vaultFailed = false
       for (const namespace of namespaces) {
         try { await this.vault.clear(namespace); this.pendingVaultDeletions.delete(namespace) }
@@ -299,5 +457,5 @@ export class EnterpriseMainSession {
     this.mutationTail = cleanup.catch(() => undefined)
     return cleanup
   }
-  suspend(): Promise<void> { this.cutoff(); return this.mutate(this.generation, () => this.host.stop()) }
+  suspend(): Promise<void> { this.cutoff(); return this.mutate(this.generation, () => this.stopHost()) }
 }

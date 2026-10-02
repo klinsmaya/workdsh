@@ -34,6 +34,10 @@
     "./projects": {
       "types": "./dist/projects.d.ts",
       "default": "./dist/projects.js"
+    },
+    "./enterprise-drafts": {
+      "types": "./dist/enterprise-drafts.d.ts",
+      "default": "./dist/enterprise-drafts.js"
     }
   },
   "files": [

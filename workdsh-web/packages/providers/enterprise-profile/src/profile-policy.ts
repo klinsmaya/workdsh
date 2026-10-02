@@ -3,10 +3,14 @@ import { EnterpriseProfileError } from './snapshot-authority.js';
 /** Reviewed Host component set. No app/default bundle or user-selected package expands it. */
 export const ENTERPRISE_HOST_PACKAGES = Object.freeze([
   '@deepseek-ai/dsh-storage', '@deepseek-ai/dsh-storage-json', '@deepseek-ai/dsh-storage-domain',
-  '@deepseek-ai/dsh-tools', '@deepseek-ai/dsh-host-webserver', '@deepseek-ai/dsh-client-connection',
-  '@deepseek-ai/dsh-agent',
+  '@deepseek-ai/dsh-tools', '@deepseek-ai/dsh-session', '@deepseek-ai/dsh-session-projection',
+  '@deepseek-ai/dsh-session-persistence-jsonl', '@deepseek-ai/dsh-llm', '@deepseek-ai/dsh-system-prompt',
+  '@deepseek-ai/dsh-agent', '@deepseek-ai/dsh-agent-loop', '@deepseek-ai/dsh-skill',
+  '@deepseek-ai/dsh-agent-preset-registry', '@deepseek-ai/dsh-agent-preset',
+  '@deepseek-ai/dsh-host-webserver', '@deepseek-ai/dsh-credentials-local', '@deepseek-ai/dsh-client-connection',
   'workdsh-plugin-audit', 'workdsh-plugin-access', 'workdsh-provider-identity-nocobase',
-  'workdsh-provider-enterprise-profile',
+  'workdsh-provider-enterprise-profile/authority', 'workdsh-provider-enterprise-profile/runtime',
+  'workdsh-provider-enterprise-profile', 'workdsh-plugin-enterprise-drafts',
 ] as const);
 export const ENTERPRISE_TOOL_NAMES = Object.freeze(['afos_read_snapshot', 'afos_render_draft'] as const);
 export interface EnterpriseComposition {

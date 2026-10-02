@@ -11,7 +11,8 @@
   "scripts": {
     "test": "corepack pnpm build && node --experimental-transform-types --test src/server/__tests__/*.test.mjs",
     "typecheck:core": "tsc -p tsconfig.core.json",
-    "build": "tsc -p tsconfig.json"
+    "build": "tsc -p tsconfig.json",
+    "test:profile": "corepack pnpm --dir ../../workdsh-web --filter workdsh-provider-enterprise-profile... build && node --experimental-transform-types --test src/server/__tests__/profile-flow.integration.mjs"
   },
   "dependencies": {
     "@afos/model-adapter": "file:../model-adapter",
@@ -37,5 +38,10 @@
     "contracts",
     "README.md",
     "README.zh-CN.md"
-  ]
+  ],
+  "pnpm": {
+    "overrides": {
+      "sequelize@6.37.8>uuid": "11.1.1"
+    }
+  }
 }
