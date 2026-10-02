@@ -68,7 +68,7 @@ remains separate.
 From `workdsh-web`, build the contracts and this package, then run its `test` and
 `typecheck` scripts. From the independent `enterprise/plugin-agent-bridge`
 workspace, `corepack pnpm test:profile` builds the Profile's workspace prerequisites
-and runs fourteen real official-runtime integration cases using fixture identity,
+and runs fifteen real official-runtime integration cases using fixture identity,
 ACL persistence and model replies. These cover actual tool turns, durable draft
 and hash confirmation, authenticated HTTP and physical WS refusal, cancellation,
 current Run policy, revocation at model dispatch, failed admission, repeated boot,

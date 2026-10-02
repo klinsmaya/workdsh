@@ -49,7 +49,7 @@ Adapter 与 handles 均由官方生命周期拥有。Main 同步撤销能力并�
 
 在 `workdsh-web` 编译契约与本包后运行 `test`、`typecheck`。在独立
 `enterprise/plugin-agent-bridge` 执行 `corepack pnpm test:profile`，先构建 Profile
-workspace 前置，再运行十四项真实官方运行时集成检查。身份、ACL 持久层和模型回复
+workspace 前置，再运行十五项真实官方运行时集成检查。身份、ACL 持久层和模型回复
 为夹具；覆盖真实工具 turn、持久草稿/哈希确认、已认证 HTTP 和物理 WS 拒绝、
 取消、当前 Run policy、模型 dispatch 时撤权、失败占用释放、重复启动及转义内容
 边界，以及离线编辑/磁盘重读、界面刷新前的 Main 准入锁、异常响应/body IO

@@ -165,12 +165,13 @@ export class EnterpriseBroker {
       let body: Record<string, unknown>
       try { body = await json(response, combined) }
       catch (error) { if (knownDenial) throw new EnterpriseBrokerError('broker/request-denied'); throw error }
-      if (generation !== this.generation || combined.aborted) fail('broker/account-changed')
+      if (generation !== this.generation) fail('broker/account-changed')
       if (!response.ok) {
         knownDenial = response.status >= 400 && response.status < 500
         const code = typeof body.code === 'string' && /^afos\/[a-z-]{1,80}$/u.test(body.code) ? body.code : 'broker/request-denied'
         throw new EnterpriseBrokerError(code, response.status >= 500 && action === 'artifacts.commitDraft')
       }
+      combined.throwIfAborted()
       return body
     } catch (error) {
       // A commit might have succeeded before a response, cancellation or account cutover.

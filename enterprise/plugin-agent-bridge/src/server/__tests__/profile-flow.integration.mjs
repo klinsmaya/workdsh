@@ -289,3 +289,21 @@ test('AFOS-CHECK-P14 an already-received HTTP denial revokes local account despi
     assert.throws(()=>business.localState());assert.throws(()=>business.drafts());assert.equal(f.tables.artifacts.size,0);
   }finally{await f.cleanup();}
 });
+
+
+test('AFOS-CHECK-P15 known completed 401 remains a denial across caller cancellation microtask schedules',async()=>{
+  for(let hops=0;hops<16;hops++){
+    let armed=false,readStarted=false;const caller=new AbortController();
+    const f=await fixture({response:request=>{
+      if(!armed||request.action!=='identity.current')return;
+      return new Response(new ReadableStream({type:'bytes',pull(controller){
+        readStarted=true;controller.enqueue(new TextEncoder().encode(JSON.stringify({code:'afos/permission-denied'})));controller.close();
+        let remaining=hops;const tick=()=>remaining--?queueMicrotask(tick):caller.abort();queueMicrotask(tick);
+      }}),{status:401});
+    }});try{
+      await f.ready();f.capability({ingressValidated:true,sandbox:'full'});await f.main.startHost();const business=f.business();armed=true;
+      await assert.rejects(business.currentAuthority(caller.signal),error=>['broker/request-denied','afos/permission-denied'].includes(error.code));
+      assert.equal(readStarted,true);assert.throws(()=>business.localState(),`hops=${hops}`);assert.throws(()=>business.drafts());
+    }finally{await f.cleanup();}
+  }
+});
