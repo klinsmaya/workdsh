@@ -1,0 +1,26 @@
+diff --git a/dist/document_loaders/fs/pptx.cjs b/dist/document_loaders/fs/pptx.cjs
+index f93c3ab79f606b5c76340de1cf01ff3d1a65af28..dadbbf44c0cdfa0b55b5950807e0c5f7c05b4b31 100644
+--- a/dist/document_loaders/fs/pptx.cjs
++++ b/dist/document_loaders/fs/pptx.cjs
+@@ -26,7 +26,7 @@ var PPTXLoader = class extends _langchain_classic_document_loaders_fs_buffer.Buf
+ 	* @returns A promise that resolves to an array of `Document` instances.
+ 	*/
+ 	async parse(raw, metadata) {
+-		const pptx = (await (0, officeparser.parseOffice)(raw, { outputErrorToConsole: true })).toText();
++		const pptx = (await (await (0, officeparser.parseOffice)(raw, { onWarning: ({ message }) => console.warn(message) })).to("text")).value;
+ 		if (!pptx) return [];
+ 		return [new _langchain_core_documents.Document({
+ 			pageContent: pptx,
+diff --git a/dist/document_loaders/fs/pptx.js b/dist/document_loaders/fs/pptx.js
+index 6e7ea32b5c9f3e32f5f2dcd3450f10af7c49d490..1d3fc6dedf247fbd248ffbbf35880688b6e2a4d8 100644
+--- a/dist/document_loaders/fs/pptx.js
++++ b/dist/document_loaders/fs/pptx.js
+@@ -25,7 +25,7 @@ var PPTXLoader = class extends BufferLoader {
+ 	* @returns A promise that resolves to an array of `Document` instances.
+ 	*/
+ 	async parse(raw, metadata) {
+-		const pptx = (await parseOffice(raw, { outputErrorToConsole: true })).toText();
++		const pptx = (await (await parseOffice(raw, { onWarning: ({ message }) => console.warn(message) })).to("text")).value;
+ 		if (!pptx) return [];
+ 		return [new Document({
+ 			pageContent: pptx,

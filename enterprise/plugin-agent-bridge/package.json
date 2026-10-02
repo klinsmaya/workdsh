@@ -12,7 +12,8 @@
     "test": "corepack pnpm build && node --experimental-transform-types --test src/server/__tests__/*.test.mjs",
     "typecheck:core": "tsc -p tsconfig.core.json",
     "build": "tsc -p tsconfig.json",
-    "test:profile": "corepack pnpm --dir ../../workdsh-web --filter workdsh-provider-enterprise-profile... build && node --experimental-transform-types --test src/server/__tests__/profile-flow.integration.mjs"
+    "test:profile": "corepack pnpm --dir ../../workdsh-web --filter workdsh-provider-enterprise-profile... build && node --experimental-transform-types --test src/server/__tests__/profile-flow.integration.mjs",
+    "test:documents": "node --test tests/officeparser-compat.test.mjs"
   },
   "dependencies": {
     "@afos/model-adapter": "file:../model-adapter",
@@ -24,14 +25,14 @@
     "@nocobase/server": "2.4.0-alpha.9"
   },
   "devDependencies": {
-    "ajv": "8.20.0",
-    "execa": "5.1.1",
-    "fast-glob": "3.3.3",
     "@nocobase/database": "2.4.0-alpha.9",
     "@nocobase/resourcer": "2.4.0-alpha.9",
     "@nocobase/server": "2.4.0-alpha.9",
-    "typescript": "6.0.3",
-    "@types/node": "22.20.0"
+    "@types/node": "22.20.0",
+    "ajv": "8.20.0",
+    "execa": "5.1.1",
+    "fast-glob": "3.3.3",
+    "typescript": "6.0.3"
   },
   "files": [
     "dist",
@@ -41,7 +42,12 @@
   ],
   "pnpm": {
     "overrides": {
-      "sequelize@6.37.8>uuid": "11.1.1"
+      "sequelize@6.37.8>uuid": "11.1.1",
+      "@nocobase/ai@2.4.0-alpha.9>officeparser": "8.1.0",
+      "@langchain/community@1.1.29>officeparser": "8.1.0"
+    },
+    "patchedDependencies": {
+      "@langchain/community@1.1.29": "patches/@langchain__community@1.1.29.patch"
     }
   }
 }

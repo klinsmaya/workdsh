@@ -54,14 +54,20 @@ Office 浏览器已使用精确 ExcelJS 源码和 UUID 11.1.1 browser entry；�
 
 Remaining at this milestone / 本阶段仍未关闭：
 
-- Bridge's NocoBase → AI → OfficeParser graph contains PDF.js 5.6.205.
-  [GHSA-hq66-cqwq-w95j](https://github.com/advisories/GHSA-hq66-cqwq-w95j)
-  requires 6.2.108. A transitive override cannot replace PDF.js embedded in
-  OfficeParser's browser bundle. The tested 8.1.0 candidate removes the `toText()`
-  API used by the pinned LangChain PPTXLoader and fails that consumer test;
-  it needs a reviewed consumer migration and bundle verification.
-  P1's own draft preview is plain text.
-  Bridge 的间接 PDF.js 漏洞仍在；不得把简单文本探针或纯文本预览当作该依赖的修复。
+- Bridge's OfficeParser consumer now selects exact `8.1.0` / PDF.js `6.2.108`.
+  A scoped pnpm patch adapts both public LangChain PPTXLoader exports to the new
+  async `AST.to('text').value` API. Actual unchanged Noco AI worker tests cover
+  DOCX/XLSX/PPTX/PDF; real Chromium loads the shipped browser bundle and actual
+  PDF worker in two cold contexts. The integrated registry graph records 666
+  dependencies and zero advisories. PPTX keeps content and notes but changes
+  table/image text formatting, which may affect downstream chunking. This local
+  SDK lock does not automatically fix a separately installed Noco application.
+  Bridge 精确 OfficeParser/PDF.js 消费路径已修复并通过实际 Worker 与浏览器测试；
+  PPTX 表格与图片文本格式有变化，独立部署的 Noco 应用仍须采用并验证相同补丁。
+- The original PDFLoader separately uses `pdf-parse 1.1.4` with embedded PDF.js
+  `1.10.100`. OfficeParser migration does not update or certify that opaque engine.
+  Separate legacy PDFLoader security and complete license closure remain open.
+  原 PDFLoader 内嵌旧引擎并未升级；该独立风险与完整许可闭合仍未关闭。
 - Native SRT's node-forge 1.4.0 has no published patched version for
   [GHSA-86w9-cpqp-85rv](https://github.com/advisories/GHSA-86w9-cpqp-85rv).
   An open, unmerged PR is not an official release. Native activation remains
