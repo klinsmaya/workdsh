@@ -1,0 +1,70 @@
+{
+  "taskId": "/root/afos_model_continuation",
+  "reviewTaskId": "/root/afos_model_continuation/model_security_review",
+  "repository": "/workspace/afos-model",
+  "origin": "https://github.com/klinsmaya/workdsh.git",
+  "branch": "afos/fixed-model-adapter",
+  "baseHead": "03764f7580cbf492f1c23fcd508b64c42a37494b",
+  "committed": false,
+  "sourceHashes": {
+    "src/adapter.ts": "159657a1542338dae8b486b522ae7c34f9575668dfd145f2d9ecef4687e6700d",
+    "src/contracts.ts": "b002ed489cae5c9cc92e82f841708d35400becff1077faf438ee7b434ae591d8",
+    "src/gateway.ts": "ef4cf02bcec37758ea38b9b966df6bef6418159b96120c664332838c48ec42ad",
+    "src/index.ts": "ec09cee2198d5fa20b3127b2d6497f46e62d0bf2cd706b5d0708dcdbd6229124",
+    "src/stream.ts": "f97ae358d942394ba8d16c6fb5e2ddeaccc0ee9f9b037ec4c6737fecf1972f36"
+  },
+  "checks": "commands.json",
+  "unitTests": {
+    "status": "PASS",
+    "count": 22,
+    "realPublishedRegistryAndAdapter": true,
+    "providerFetch": "in-process offline Response fixture; no external model request"
+  },
+  "independentReview": {
+    "status": "SOURCE_APPROVED_OFFLINE_ONLY",
+    "report": "review/report.md",
+    "reportSha256": "383153e2d75a4e627a15352fccdbccbba3d140a4d21e117b1fa19a169e9a1c18",
+    "regressions": 25,
+    "finalDeltaAssertions": 3,
+    "frozenManifest": "review/final-freeze-manifest.json"
+  },
+  "formalAcceptance": [
+    {
+      "id": "AT-34",
+      "status": "NOT_RUN",
+      "reason": "Requires mounted actual enterprise Profile, real current server authority, durable production ledger and authorized model gateway complete business chain; offline fixture does not close formal acceptance"
+    },
+    {
+      "id": "AT-45",
+      "status": "NOT_RUN",
+      "reason": "Requires mounted actual enterprise Profile, real current server authority, durable production ledger and authorized model gateway complete business chain; offline fixture does not close formal acceptance"
+    },
+    {
+      "id": "AT-46",
+      "status": "NOT_RUN",
+      "reason": "Requires mounted actual enterprise Profile, real current server authority, durable production ledger and authorized model gateway complete business chain; offline fixture does not close formal acceptance"
+    },
+    {
+      "id": "AT-47",
+      "status": "NOT_RUN",
+      "reason": "Requires mounted actual enterprise Profile, real current server authority, durable production ledger and authorized model gateway complete business chain; offline fixture does not close formal acceptance"
+    }
+  ],
+  "rollback": "Before activation remove isolated module by local review patch/revert; after gateway mounting disable managed models.stream and preserve unknown reservations/usage records. No data, credentials, Session or artifacts deletion.",
+  "unfinished": [
+    "Mount fixed transport in trusted Main/Host and the server resource under explicit managed models.stream policy default false",
+    "Provide active current server revocation signals and durable atomic ledger with crash/ambiguous-write recovery",
+    "Verify configured provider context bound, real supplier streaming/cancel/errors/counts and actual budget concurrency",
+    "Images/files/reasoning/toolHistory deliberately unsupported; corresponding applicable scenarios NOT_RUN",
+    "Peer mismatch Cordis~4.0.4 published requirement/current WorkDSH4.0.3 remains recorded; cross-runtime exchange NOT_RUN",
+    "AT-34 actual malicious-material full business task, AT-45 actual client-vs-server audit, AT-46 server/DSH receipt consistency and AT-47 durable budget acceptance remain NOT_RUN"
+  ],
+  "externalOperations": {
+    "push": false,
+    "publish": false,
+    "deploy": false,
+    "productionMigration": false,
+    "modelRequest": false,
+    "permissionExpansion": false
+  }
+}

@@ -1,0 +1,107 @@
+{
+  "scope": "offline source-snapshot regression assertions, not formal AT",
+  "count": 25,
+  "allPassed": true,
+  "checks": [
+    {
+      "name": "missing counters retained unknown",
+      "passed": true
+    },
+    {
+      "name": "cleanup exception sanitized",
+      "passed": true
+    },
+    {
+      "name": "cancel settlement releases within 80ms; no finish",
+      "passed": true
+    },
+    {
+      "name": "late reserve settled once",
+      "passed": true
+    },
+    {
+      "name": "expiry aborts vendor",
+      "passed": true
+    },
+    {
+      "name": "named transport LlmError sanitized",
+      "passed": true
+    },
+    {
+      "name": "usage ordering strict",
+      "passed": true
+    },
+    {
+      "name": "preaborted starts no dependency or unhandled rejection",
+      "passed": true
+    },
+    {
+      "name": "refreshed lease revocation aborts vendor",
+      "passed": true
+    },
+    {
+      "name": "removed undeclared tool blocked",
+      "passed": true
+    },
+    {
+      "name": "default disabled starts no vendor auth/key",
+      "passed": true
+    },
+    {
+      "name": "forged usage refused",
+      "passed": true
+    },
+    {
+      "name": "forged provider refused",
+      "passed": true
+    },
+    {
+      "name": "forged endpoint refused",
+      "passed": true
+    },
+    {
+      "name": "forged headers refused",
+      "passed": true
+    },
+    {
+      "name": "forged credential refused",
+      "passed": true
+    },
+    {
+      "name": "forged actorId refused",
+      "passed": true
+    },
+    {
+      "name": "forged organizationId refused",
+      "passed": true
+    },
+    {
+      "name": "forged role refused",
+      "passed": true
+    },
+    {
+      "name": "offline concurrency single reservation",
+      "passed": true
+    },
+    {
+      "name": "unknown remains charged",
+      "passed": true
+    },
+    {
+      "name": "error finish strips vendor failure/replay",
+      "passed": true
+    },
+    {
+      "name": "truncation refused",
+      "passed": true
+    },
+    {
+      "name": "json-array-role refused",
+      "passed": true
+    },
+    {
+      "name": "json-array-blocktype refused",
+      "passed": true
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+{"probe":"actual localhost Gateway WebSocket upgrade with HTTP connection/request deny listener","upgrade":"OPEN","middlewareCalls":0,"result":"BYPASS_CONFIRMED","scope":"fixture BrowserAuth allows test; not enterprise authentication acceptance"}

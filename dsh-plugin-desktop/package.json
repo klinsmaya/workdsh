@@ -22,7 +22,8 @@
     "lib/workdsh-main.js",
     "README.md",
     "README.zh.md",
-    "THIRD_PARTY_NOTICES.md"
+    "THIRD_PARTY_NOTICES.md",
+    "afos-desktop-config.json"
   ],
   "engines": {
     "node": "^22.19.0 || >=24.0.0"
@@ -93,7 +94,8 @@
       "build/tray-icon*.png",
       "lib/workdsh-main.js",
       "package.json",
-      "!node_modules/**"
+      "!node_modules/**",
+      "afos-desktop-config.json"
     ],
     "mac": {
       "artifactName": "WorkDSH-${version}-${arch}.${ext}",

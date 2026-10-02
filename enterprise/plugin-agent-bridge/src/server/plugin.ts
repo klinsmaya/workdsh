@@ -2,21 +2,27 @@ import { Plugin, type Application } from '@nocobase/server';
 import { Transaction } from '@nocobase/database';
 import { parseRequest } from '@nocobase/resourcer';
 import { accessVerifier, bearerToken, isEnterpriseTokenCandidate, safeServerEpoch, type AccessEvidence, type ResourceConfig } from './auth.js';
-import { AgentBridge, BridgeError, contractVersion, type BridgeStore, type Material, type MaterialSummary, type Project, type Tables, type Upload } from './core.js';
+import { AgentBridge, BridgeError, contractVersion, type BridgeStore, type Material, type MaterialSummary, type Project, type StorePage, type Tables, type Upload } from './core.js';
 import { randomBytes } from 'node:crypto';
+import { Readable } from 'node:stream';
+import { encodeModelSse } from '@afos/model-adapter';
+import { NocoBaseModelStream,NocoBaseModelUsageLedger,type ManagedModelConfig } from './model.js';
 
-interface BridgeConfig extends ResourceConfig { releaseId: string; policyRevision:string }
+interface BridgeConfig extends ResourceConfig { releaseId: string; policyRevision:string; model?:ManagedModelConfig }
 interface RequestContext {
   path: string;
   method: string;
   request: { body?: unknown };
   query?: Record<string, unknown>;
   getBearerToken?(): string | undefined;
-  state: { currentUser?: { get(key: string): unknown } };
+  state: { currentUser?: { get(key: string): unknown }; currentRole?:string; currentRoles?:string[]; attachRoles?:unknown[] };
   get(name: string): string;
   body: unknown;
   status: number;
   withoutDataWrapping?: boolean;
+  req?: { aborted?:boolean; destroyed?:boolean; on(name:string,callback:()=>void):unknown; off(name:string,callback:()=>void):unknown };
+  res?: { destroyed?:boolean; writableEnded?:boolean; on(name:string,callback:()=>void):unknown; off(name:string,callback:()=>void):unknown };
+  set?(name:string,value:string):void;
 }
 interface IdpService {
   registerResourceServer(name: string, config: {path: string; identifier: string; audience: string; scope: string; accessTokenFormat: 'jwt'; jwt: {sign: {alg: 'RS256'}}}): void;
@@ -27,7 +33,7 @@ interface IdpService {
 interface ClientMetadata { client_id?:string; scope?:string; subject_type?:string; application_type?:string; token_endpoint_auth_method?:string; redirect_uris?:string[] }
 interface Row { get(key: string): unknown; toJSON(): Record<string, unknown> }
 const tableNames = { runs: 'afosRuns', uploads: 'afosUploads', receipts: 'afosReceipts', artifacts: 'afosArtifacts',commitRequests:'afosCommitRequests' } as const;
-const privateCollections = new Set<string>([...Object.values(tableNames), 'afosAudit', 'afosClientAccess', 'afosRevokedTokens']);
+const privateCollections = new Set<string>([...Object.values(tableNames), 'afosAudit', 'afosClientAccess', 'afosRevokedTokens','afosModelBudgets','afosModelCalls']);
 
 function text(value: unknown): string {
   if (typeof value !== 'string' || !value || value.length > 256) throw new BridgeError(500, 'afos/invalid-server-record');
@@ -60,6 +66,21 @@ export class NocoBaseBridgeStore implements BridgeStore {
   readonly audience: string;
   constructor(app: Application, ctx: RequestContext, audience: string, tx?: Transaction) { this.app = app; this.ctx = ctx; this.audience = audience; this.tx = tx; }
   private transactionOptions() { return this.tx ? { transaction: this.tx } : {}; }
+  private async currentRoles(principalId?:string):Promise<void> {
+    const state=this.ctx.state;
+    const id=state?.currentUser?.get('id');
+    const names=state?.currentRoles?.length?state.currentRoles:state?.currentRole?[state.currentRole]:[];
+    // Native department attachment resolution has no verified uncached seam here.
+    // Reject it rather than retaining roles from the initial HTTP context.
+    if((typeof id!=='string'&&typeof id!=='number')||principalId&&String(id)!==principalId
+      ||state.attachRoles?.length||!names.length||names.some(name=>typeof name!=='string'||name==='anonymous'))throw new BridgeError(403,'afos/current-role-unavailable');
+    const roles=await this.app.db.getRepository('users.roles',id).find({raw:true,...this.transactionOptions()}) as {name?:unknown}[];
+    if(!Array.isArray(roles)||names.some(name=>!roles.some(role=>role.name===name)))throw new BridgeError(403,'afos/current-role-revoked');
+    const user=await this.app.db.getRepository('users').findOne({filterByTk:id,...this.transactionOptions()});
+    if(!user)throw new BridgeError(403,'afos/current-role-revoked');
+    state.currentUser=user;
+    // Preserve the native selected role set; a new role cannot expand this request.
+  }
   async tokenActive(evidence: AccessEvidence): Promise<boolean> {
     const row = await this.app.db.getRepository('afosClientAccess').findOne({ filter: {principalId:evidence.principalId,clientId:evidence.clientId,active:true}, ...this.transactionOptions() });
     const revoked = await this.app.db.getRepository('afosRevokedTokens').findOne({filterByTk:evidence.tokenId,...this.transactionOptions()});
@@ -89,7 +110,8 @@ export class NocoBaseBridgeStore implements BridgeStore {
         catch { return false; }
       })) return false;
     const notBefore = safeServerEpoch(row?.get('notBefore'));
-    return Boolean(row && user && !revoked && notBefore !== undefined && evidence.issuedAt >= notBefore && evidence.expiresAt > Date.now());
+    if(!(row&&user&&!revoked&&notBefore!==undefined&&evidence.issuedAt>=notBefore&&evidence.expiresAt>Date.now()))return false;
+    try{await this.currentRoles(evidence.principalId);return true;}catch{return false;}
   }
   async deviceId(evidence:AccessEvidence):Promise<string|undefined> {
     const row=await this.app.db.getRepository('afosClientAccess').findOne({filter:{principalId:evidence.principalId,clientId:evidence.clientId,active:true},...this.transactionOptions()});
@@ -97,29 +119,34 @@ export class NocoBaseBridgeStore implements BridgeStore {
     return typeof value==='string'&&value.length>0&&value.length<=256&&!/[\u0000-\u001f]/u.test(value)?value:undefined;
   }
   private async businessRows(resource: string, params: Record<string, unknown>): Promise<Row[]> {
+    await this.currentRoles();
     const permission = await this.app.acl.resolveActionParams(this.ctx, { resourceName: resource, actionName: 'list', params, useCurrentRepository: false });
-    return this.app.db.getRepository(resource).find({ ...permission.mergedParams, ...this.transactionOptions() }) as Promise<Row[]>;
+    // ACL merges filters/fields; pagination is a server bound, never a caller privilege.
+    return this.app.db.getRepository(resource).find({ ...permission.mergedParams, ...(typeof params.limit==='number'?{limit:params.limit}:{}), ...(params.sort?{sort:params.sort}:{}), ...this.transactionOptions() }) as Promise<Row[]>;
   }
   private async memberships(evidence: AccessEvidence, projectId?: string, archive = false): Promise<Row[]> {
     return this.app.db.getRepository('afosProjectMembers').find({ filter: {
       principalId: evidence.principalId, active: true,
       ...(projectId ? { projectId } : {}),
       ...(archive ? { canArchive: true } : {}),
-    }, ...this.transactionOptions() }) as Promise<Row[]>;
+    },limit:51,sort:['id'], ...this.transactionOptions() }) as Promise<Row[]>;
   }
-  async projects(evidence: AccessEvidence): Promise<Project[]> {
-    const memberships = await this.memberships(evidence);
-    if (!memberships.length) return [];
-    const rows = await this.businessRows('afosProjects', { filter: { id: { $in: memberships.map(row => row.get('projectId')) }, active: true }, fields: ['id', 'organizationId', 'name'], sort: ['id'] });
-    return rows.map(projectRow).filter(project => memberships.some(member => member.get('projectId') === project.id && member.get('organizationId') === project.organizationId));
+  async projects(evidence: AccessEvidence,after?:string): Promise<StorePage<Project>> {
+    const memberships=await this.app.db.getRepository('afosProjectMembers').find({filter:{principalId:evidence.principalId,active:true,...(after?{id:{$gt:after}}:{})},fields:['id','projectId','organizationId'],sort:['id'],limit:51,...this.transactionOptions()}) as Row[];
+    const selected=memberships.slice(0,50);
+    if (!selected.length) return {items:[],nextPosition:null};
+    const rows = await this.businessRows('afosProjects', { filter: { id: { $in: selected.map(row => row.get('projectId')) }, active: true }, fields: ['id', 'organizationId', 'name'], sort: ['id'],limit:50 });
+    const items=rows.map(projectRow).filter(project => selected.some(member => member.get('projectId') === project.id && member.get('organizationId') === project.organizationId));
+    return {items,nextPosition:memberships.length>50?text(selected[selected.length-1]!.get('id')):null};
   }
   async project(evidence: AccessEvidence, projectId: string, mode: 'read' | 'archive'): Promise<Project | undefined> {
     const members = await this.memberships(evidence, projectId, mode === 'archive');
     if (!members.length) return undefined;
-    const rows = await this.businessRows('afosProjects', { filter: { id: projectId, active: true }, fields: ['id', 'organizationId', 'name'] });
+    const rows = await this.businessRows('afosProjects', { filter: { id: projectId, active: true }, fields: ['id', 'organizationId', 'name'],limit:1 });
     const project = rows[0] ? projectRow(rows[0]) : undefined;
     if (!project || !members.some(row => row.get('organizationId') === project.organizationId)) return undefined;
     if (mode === 'archive') {
+      await this.currentRoles(evidence.principalId);
       // Recheck the actual artifact create privilege; internal repository writes do not grant it.
       const permission = await this.app.acl.resolveActionParams(this.ctx, { resourceName: 'afosArtifacts', actionName: 'create', params: { values: { projectId } }, useCurrentRepository: false });
       const values = permission.mergedParams?.values as Record<string, unknown> | undefined;
@@ -127,13 +154,14 @@ export class NocoBaseBridgeStore implements BridgeStore {
     }
     return project;
   }
-  async materials(evidence: AccessEvidence, projectId: string): Promise<MaterialSummary[]> {
-    if (!await this.project(evidence, projectId, 'read')) return [];
-    const rows = await this.businessRows('afosMaterials', { filter: { projectId }, fields: ['id', 'projectId', 'revisionId', 'hash', 'name'], sort: ['id'] });
-    return rows.map(row => ({id:text(row.get('id')),projectId:text(row.get('projectId')),revisionId:text(row.get('revisionId')),hash:text(row.get('hash')),name:text(row.get('name'))}));
+  async materials(evidence: AccessEvidence, projectId: string,after?:string): Promise<StorePage<MaterialSummary>> {
+    if (!await this.project(evidence, projectId, 'read')) return {items:[],nextPosition:null};
+    const rows = await this.businessRows('afosMaterials', { filter: { projectId,...(after?{id:{$gt:after}}:{}) }, fields: ['id', 'projectId', 'revisionId', 'hash', 'name'], sort: ['id'],limit:51 });
+    const selected=rows.slice(0,50);
+    return {items:selected.map(row => ({id:text(row.get('id')),projectId:text(row.get('projectId')),revisionId:text(row.get('revisionId')),hash:text(row.get('hash')),name:text(row.get('name'))})),nextPosition:rows.length>50?text(selected[selected.length-1]!.get('id')):null};
   }
   async material(evidence: AccessEvidence, materialId: string, revisionId: string): Promise<Material | undefined> {
-    const rows = await this.businessRows('afosMaterials', { filter: { id: materialId, revisionId }, fields: ['id', 'projectId', 'revisionId', 'hash', 'name', 'text'] });
+    const rows = await this.businessRows('afosMaterials', { filter: { id: materialId, revisionId }, fields: ['id', 'projectId', 'revisionId', 'hash', 'name', 'text'],limit:1 });
     const material = rows[0] ? materialRow(rows[0]) : undefined;
     return material && await this.project(evidence, material.projectId, 'read') ? material : undefined;
   }
@@ -144,6 +172,7 @@ export class NocoBaseBridgeStore implements BridgeStore {
   async insert<K extends keyof Tables>(table: K, value: Tables[K]): Promise<void> {
     const values = { id: value.id, ...(table === 'artifacts' ? { projectId: (value as Tables['artifacts']).projectId } : {}), payload: value };
     if (table === 'artifacts') {
+      await this.currentRoles();
       const permission = await this.app.acl.resolveActionParams(this.ctx, {resourceName:tableNames.artifacts,actionName:'create',params:{values},useCurrentRepository:false});
       const merged = permission.mergedParams as {values?:unknown;whitelist?:unknown;blacklist?:unknown;filter?:unknown};
       const whitelist = Array.isArray(merged.whitelist) ? merged.whitelist : undefined;
@@ -173,6 +202,7 @@ export default class PluginAgentBridge extends Plugin {
   private readonly verified = new WeakMap<object, AccessEvidence>();
   private idp: IdpService | undefined;
   private bridgeEnabled = false;
+  private readonly activeModelStreams=new Set<AbortController>();
   override async beforeLoad(): Promise<void> {
     const baseFields = [{ name: 'id', type: 'string', primaryKey: true }];
     const stringFields = (names: string[]) => names.map(name => ({name, type: 'string'}));
@@ -182,6 +212,7 @@ export default class PluginAgentBridge extends Plugin {
     this.db.collection({name:'afosClientAccess',autoGenId:false,indexes:[{unique:true,fields:['principalId','clientId']}],fields:[...baseFields,...stringFields(['principalId','clientId','deviceId']),{name:'active',type:'boolean',defaultValue:false},{name:'notBefore',type:'bigInt'}]});
     this.db.collection({name:'afosRevokedTokens',autoGenId:false,fields:[...baseFields]});
     for (const name of Object.values(tableNames)) this.db.collection({ name, autoGenId: false, fields: [...baseFields, ...(name === 'afosArtifacts' ? stringFields(['projectId']) : []), { name: 'payload', type: 'json' }] });
+    for(const name of ['afosModelBudgets','afosModelCalls'])this.db.collection({name,autoGenId:false,fields:[...baseFields,{name:'payload',type:'json'}]});
     this.db.collection({ name: 'afosAudit', autoGenId: false, fields: [...baseFields, ...stringFields(['principalId', 'action', 'outcome', 'requestId', 'code'])] });
     // Ordinary NocoBase CRUD also reaches these collections. Revisions are
     // append-only even when a role has broad collection update/delete ACL.
@@ -195,6 +226,7 @@ export default class PluginAgentBridge extends Plugin {
     const config = this.options.bridge as BridgeConfig | undefined;
     if (!config || typeof config.releaseId !== 'string'||!config.releaseId||config.releaseId.length>128||typeof config.policyRevision!=='string'||!config.policyRevision||config.policyRevision.length>128) throw new Error('afos/managed-config-required');
     const cursorKey=randomBytes(32);
+    const model=config.model?new NocoBaseModelStream(config.model,new NocoBaseModelUsageLedger(this.app)):undefined;
     const verify = accessVerifier(config);
     const idp = this.app.pm.get('idp-oauth') as unknown as {service?: IdpService} | undefined;
     if (!idp?.service) throw new Error('afos/idp-required');
@@ -235,8 +267,32 @@ export default class PluginAgentBridge extends Plugin {
         ctx.status = 400; ctx.body = {code:'afos/invalid-request'}; return;
       }
       const request = body as {contractVersion?:unknown;action?:unknown;params?:unknown};
+      if(request.contractVersion==='afos.model.v1'){
+        if(!model||config.model?.enabled!==true){ctx.status=403;ctx.body={code:'afos/model-disabled'};return;}
+        const controller=new AbortController();
+        const abort=()=>controller.abort();
+        const cleanup=()=>{controller.abort();this.activeModelStreams.delete(controller);ctx.req?.off('aborted',abort);ctx.res?.off('close',abort);};
+        this.activeModelStreams.add(controller);
+        ctx.req?.on('aborted',abort);ctx.res?.on('close',abort);
+        if(ctx.req?.aborted||ctx.req?.destroyed||ctx.res?.destroyed||ctx.res?.writableEnded)controller.abort();
+        const bridge=new AgentBridge(new NocoBaseBridgeStore(this.app,ctx,config.audience),config.releaseId,config.policyRevision,cursorKey,true);
+        try {
+          const input=model.validate(body);
+          // Do not send success headers before current run/ACL validation succeeds.
+          await bridge.authorizeModel(evidence,input.run);
+          controller.signal.throwIfAborted();
+          if(!this.bridgeEnabled)throw new BridgeError(403,'afos/model-disabled');
+          ctx.set?.('Content-Type','text/event-stream');ctx.set?.('Cache-Control','no-store');ctx.set?.('X-Content-Type-Options','nosniff');
+          const stream=Readable.from((async function*(){
+            try{for await(const chunk of model.stream(input,evidence,bridge,controller.signal))yield encodeModelSse(chunk);}
+            finally{cleanup();}
+          })(),{objectMode:false});
+          stream.once('close',cleanup);stream.once('error',cleanup);ctx.body=stream;
+        }catch(error){cleanup();ctx.status=error instanceof BridgeError?error.status:403;ctx.body={code:error instanceof BridgeError?error.code:'afos/model-request-denied'};}
+        return;
+      }
       if(request.contractVersion!==contractVersion||Object.keys(request).some(key=>!['contractVersion','action','params'].includes(key))){ctx.status=400;ctx.body={code:'afos/contract-not-supported'};return;}
-      const bridge = new AgentBridge(new NocoBaseBridgeStore(this.app, ctx, config.audience), config.releaseId,config.policyRevision,cursorKey);
+      const bridge = new AgentBridge(new NocoBaseBridgeStore(this.app, ctx, config.audience), config.releaseId,config.policyRevision,cursorKey,config.model?.enabled===true);
       try { ctx.body = await bridge.dispatch(evidence, request.action, request.params); }
       catch (error) { ctx.status = error instanceof BridgeError ? error.status : 503; ctx.body = {code:error instanceof BridgeError ? error.code : 'afos/request-unknown'}; }
     };
@@ -244,5 +300,5 @@ export default class PluginAgentBridge extends Plugin {
     this.app.acl.allow('afos', ['list', 'create'], 'loggedIn');
     this.bridgeEnabled = true;
   }
-  override async afterDisable(): Promise<void> { this.bridgeEnabled=false;this.idp?.unregisterResourceServer('afos'); }
+  override async afterDisable(): Promise<void> { this.bridgeEnabled=false;for(const stream of this.activeModelStreams)stream.abort();this.activeModelStreams.clear();this.idp?.unregisterResourceServer('afos'); }
 }

@@ -1,0 +1,17 @@
+{
+  "command": [
+    "./node_modules/.bin/tsc",
+    "-p",
+    "packages/providers/enterprise-profile/tsconfig.json",
+    "--noEmit"
+  ],
+  "cwd": "/workspace/afos-profile/workdsh-web",
+  "started_at": "2026-10-02T19:33:53.164022+00:00",
+  "ended_at": "2026-10-02T19:33:54.233195+00:00",
+  "exit_code": 0,
+  "stdout_file": "profile-review-typecheck.stdout.log",
+  "stderr_file": "profile-review-typecheck.stderr.log",
+  "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "formal_acceptance_pass": false
+}

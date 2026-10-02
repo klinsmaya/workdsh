@@ -1,0 +1,75 @@
+[
+  {
+    "name": "profile-build",
+    "command": [
+      "corepack",
+      "pnpm",
+      "--filter",
+      "workdsh-provider-enterprise-profile",
+      "build"
+    ],
+    "cwd": "/workspace/afos-profile/workdsh-web",
+    "startedAt": "2026-10-02T19:49:11.102498+00:00",
+    "endedAt": "2026-10-02T19:49:13.426528+00:00",
+    "exitCode": 0,
+    "stdout": "packages/providers/enterprise-profile/evidence/profile-build.stdout.log",
+    "stdoutSha256": "3045839f995dd78c3db0e6f646e4fb7885adc4ae87535686694a0afd3efc1d3e",
+    "stderr": "packages/providers/enterprise-profile/evidence/profile-build.stderr.log",
+    "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "scope": "OFFLINE_SUPPORT_CHECK_NOT_AN_AT_PASS"
+  },
+  {
+    "name": "profile-typecheck",
+    "command": [
+      "corepack",
+      "pnpm",
+      "--filter",
+      "workdsh-provider-enterprise-profile",
+      "typecheck"
+    ],
+    "cwd": "/workspace/afos-profile/workdsh-web",
+    "startedAt": "2026-10-02T19:49:13.427081+00:00",
+    "endedAt": "2026-10-02T19:49:17.398585+00:00",
+    "exitCode": 0,
+    "stdout": "packages/providers/enterprise-profile/evidence/profile-typecheck.stdout.log",
+    "stdoutSha256": "4f406c55077174ef1d4fe2b7a432bfdb0fcc6a075e2b2b0702ea21e70875ef66",
+    "stderr": "packages/providers/enterprise-profile/evidence/profile-typecheck.stderr.log",
+    "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "scope": "OFFLINE_SUPPORT_CHECK_NOT_AN_AT_PASS"
+  },
+  {
+    "name": "profile-tests",
+    "command": [
+      "corepack",
+      "pnpm",
+      "--filter",
+      "workdsh-provider-enterprise-profile",
+      "test"
+    ],
+    "cwd": "/workspace/afos-profile/workdsh-web",
+    "startedAt": "2026-10-02T19:49:17.398736+00:00",
+    "endedAt": "2026-10-02T19:49:18.374699+00:00",
+    "exitCode": 0,
+    "stdout": "packages/providers/enterprise-profile/evidence/profile-tests.stdout.log",
+    "stdoutSha256": "d0a11961f9313c138b155599caeee9b0fede6f2f674b00e4e8eb4627b5846eca",
+    "stderr": "packages/providers/enterprise-profile/evidence/profile-tests.stderr.log",
+    "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "scope": "OFFLINE_SUPPORT_CHECK_NOT_AN_AT_PASS"
+  },
+  {
+    "name": "profile-bilingual-docs",
+    "command": [
+      "node",
+      "scripts/verify-bilingual-docs.mjs"
+    ],
+    "cwd": "/workspace/afos-profile",
+    "startedAt": "2026-10-02T19:51:00.051294+00:00",
+    "endedAt": "2026-10-02T19:51:00.351727+00:00",
+    "exitCode": 0,
+    "stdout": "packages/providers/enterprise-profile/evidence/profile-bilingual-docs.stdout.log",
+    "stdoutSha256": "1382dbcd35f3578762af3bb7d3467feee733b9cb1a79887ccb54b78193c2808a",
+    "stderr": "packages/providers/enterprise-profile/evidence/profile-bilingual-docs.stderr.log",
+    "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "scope": "TRACKED_BILINGUAL_DOCUMENTS_SUPPORT_CHECK"
+  }
+]

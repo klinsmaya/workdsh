@@ -1,0 +1,14 @@
+{
+  "command": [
+    "node",
+    "packages/providers/enterprise-profile/evidence/profile-review-lifetime-route-probe.mjs"
+  ],
+  "cwd": "/workspace/afos-profile/workdsh-web",
+  "started_at": "2026-10-02T19:43:17.414588+00:00",
+  "exit_code": 0,
+  "stdout_sha256": "df01416dc9fcb82a4239b2fd40e31fb43a439b9fba5bde3f64e243700b0a1837",
+  "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "compiled_ingress_sha256": "184c1808292aeb88746d93361c2040af6f8e9e6ceae026bb2e2b7cf9bfd4dbf3",
+  "script_sha256": "63ddd74719f26edd0ffb8e8f124314776d6081046d4c39e94325bc408634c244",
+  "formal_acceptance_pass": false
+}

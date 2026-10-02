@@ -4,6 +4,10 @@ import { readFile } from 'node:fs/promises';
 import Ajv2020 from 'ajv/dist/2020.js';
 import { AgentBridge, digest } from '../core.ts';
 
+function page(rows,after) {
+  const selected=rows.filter(row=>!after||row.id>after).sort((a,b)=>a.id.localeCompare(b.id)).slice(0,51);
+  return {items:selected.slice(0,50),nextPosition:selected.length>50?selected[49].id:null};
+}
 function fixture() {
   const evidence = {issuer:'https://enterprise.example/api',principalId:'alice',clientId:'desktop',grantId:'grant1',issuedAt:Date.now(),tokenId:'token1',expiresAt:Date.now()+3600000};
   const allowed = new Set(['alice:p1','bob:p2','mallory:p3']);
@@ -16,9 +20,9 @@ function fixture() {
   const store = {
     tokenActive:async()=>active,
     deviceId:async()=>'device1',
-    projects:async e=>projects.filter(p=>allowed.has(`${e.principalId}:${p.id}`)),
+    projects:async(e,after)=>page(projects.filter(p=>allowed.has(`${e.principalId}:${p.id}`)),after),
     project:async(e,id)=>allowed.has(`${e.principalId}:${id}`)?projects.find(p=>p.id===id):undefined,
-    materials:async(e,id)=>allowed.has(`${e.principalId}:${id}`)&&id==='p1'?[structuredClone(material)]:[],
+    materials:async(e,id,after)=>page(allowed.has(`${e.principalId}:${id}`)&&id==='p1'?[structuredClone(material)]:[],after),
     material:async(e,id,revisionId)=>allowed.has(`${e.principalId}:${material.projectId}`)&&id===material.id&&revisionId===material.revisionId?structuredClone(material):undefined,
     get:async(t,id)=>structuredClone(tables[t].get(id)),
     insert:async(t,row)=>{if(tables[t].has(row.id))throw new Error('unique conflict');tables[t].set(row.id,structuredClone(row));},
@@ -52,8 +56,31 @@ test('AFOS-CHECK-B01 authorized source to immutable draft and server receipt',as
   const receipts=await Promise.all([f.bridge.dispatch(f.evidence,'artifacts.commitDraft',args),f.bridge.dispatch(f.evidence,'artifacts.commitDraft',args)]);
   assert.deepEqual(receipts[0],receipts[1]);
   assert.equal(f.tables.artifacts.size,1);
-  assert.equal((await f.bridge.dispatch(f.evidence,'runs.getReceipt',{runId:run.runId})).status,'archived');
+  assert.equal((await f.bridge.dispatch(f.evidence,'runs.getReceipt',{runId:run.runId,projectId:'p1'})).status,'archived');
   const artifact=[...f.tables.artifacts.values()][0];assert.equal(artifact.status,'draft-needs-review');assert.deepEqual(artifact.sources,f.inputs.map(({sha256,...ref})=>({...ref,hash:sha256})));
+});
+
+test('AFOS-CHECK-B14 current identity is server-bound and rejects actor or project forgery',async()=>{
+  const f=fixture();const snapshot=await f.bridge.dispatch(f.evidence,'identity.current',{projectId:'p1'});
+  assert.deepEqual(snapshot.binding,{issuer:f.evidence.issuer,subject:'alice',organizationId:'org1',deviceId:'device1'});
+  assert.deepEqual(snapshot.permissions,{read:true,archive:true});assert.match(snapshot.authorizationRevision,/^[a-f0-9]{64}$/);
+  assert.ok(Date.parse(snapshot.expiresAt)>Date.now()&&Date.parse(snapshot.expiresAt)<=Date.now()+5000);
+  await assert.rejects(f.bridge.dispatch(f.evidence,'identity.current',{projectId:'p1',role:'admin'}),/afos\/forged-context/);
+  await assert.rejects(f.bridge.dispatch(f.evidence,'identity.current',{projectId:'p2'}),/afos\/project-denied/);
+  f.allowed.delete('alice:p1');await assert.rejects(f.bridge.dispatch(f.evidence,'identity.current',{projectId:'p1'}),/afos\/project-denied/);
+});
+
+test('AFOS-CHECK-B15 recovery rechecks release, source pins and device; receipt is project-bound',async()=>{
+  const f=fixture();const run=await f.authorize();
+  assert.deepEqual(await f.bridge.dispatch(f.evidence,'runs.getAuthorization',{runId:run.runId}),run);
+  await assert.rejects(f.bridge.dispatch(f.evidence,'runs.getReceipt',{runId:run.runId,projectId:'p2'}),/afos\/run-project-mismatch/);
+  f.store.deviceId=async()=>'other-device';
+  await assert.rejects(f.bridge.dispatch(f.evidence,'runs.getAuthorization',{runId:run.runId}),/afos\/run-binding-changed/);
+  await assert.rejects(f.bridge.dispatch(f.evidence,'runs.getReceipt',{runId:run.runId,projectId:'p1'}),/afos\/run-binding-changed/);
+  f.store.deviceId=async()=>'device1';f.material.text='changed source';
+  await assert.rejects(f.bridge.dispatch(f.evidence,'runs.getAuthorization',{runId:run.runId}),/afos\/input-revoked-or-changed/);
+  const newRelease=new AgentBridge(f.store,'different-release');
+  await assert.rejects(newRelease.dispatch(f.evidence,'runs.getAuthorization',{runId:run.runId}),/afos\/run-binding-changed/);
 });
 
 test('AFOS-CHECK-B12 commit request key is organization/action scoped across different runs',async()=>{
@@ -110,7 +137,7 @@ test('AFOS-CHECK-B02 same-organization cross-project and second-organization den
   const f=fixture();
   for(const projectId of ['p2','p3']) await assert.rejects(f.bridge.dispatch(f.evidence,'materials.listAllowed',{projectId}),/afos\/project-denied/);
   const run=await f.authorize();
-  await assert.rejects(f.bridge.dispatch({...f.evidence,principalId:'bob'},'runs.getReceipt',{runId:run.runId}),/afos\/run-not-found/);
+  await assert.rejects(f.bridge.dispatch({...f.evidence,principalId:'bob'},'runs.getReceipt',{runId:run.runId,projectId:'p1'}),/afos\/run-not-found/);
 });
 
 test('AFOS-CHECK-B03 revocation rejects reads, archive and receipt replay',async()=>{
@@ -118,7 +145,7 @@ test('AFOS-CHECK-B03 revocation rejects reads, archive and receipt replay',async
   f.allowed.delete('alice:p1');
   await assert.rejects(f.bridge.dispatch(f.evidence,'artifacts.commitDraft',args),/afos\/project-denied/);
   assert.equal(f.tables.artifacts.size,0);
-  await assert.rejects(f.bridge.dispatch(f.evidence,'runs.getReceipt',{runId:run.runId}),/afos\/project-denied/);
+  await assert.rejects(f.bridge.dispatch(f.evidence,'runs.getReceipt',{runId:run.runId,projectId:'p1'}),/afos\/project-denied/);
   f.revoke();await assert.rejects(f.bridge.dispatch(f.evidence,'projects.listAllowed',{}),/afos\/access-revoked/);
 });
 
@@ -155,7 +182,7 @@ test('AFOS-CHECK-B07 durable archive receipt survives expired task and changed s
   const receipt=await f.bridge.dispatch(f.evidence,'artifacts.commitDraft',args);
   f.tables.runs.get(run.runId).expiresAt=Date.now()-1;
   f.material.text='changed';
-  assert.deepEqual((await f.bridge.dispatch(f.evidence,'runs.getReceipt',{runId:run.runId})).receipt,receipt);
+  assert.deepEqual((await f.bridge.dispatch(f.evidence,'runs.getReceipt',{runId:run.runId,projectId:'p1'})).receipt,receipt);
   f.allowed.delete('alice:p1');
-  await assert.rejects(f.bridge.dispatch(f.evidence,'runs.getReceipt',{runId:run.runId}),/afos\/project-denied/);
+  await assert.rejects(f.bridge.dispatch(f.evidence,'runs.getReceipt',{runId:run.runId,projectId:'p1'}),/afos\/project-denied/);
 });

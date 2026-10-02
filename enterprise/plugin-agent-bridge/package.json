@@ -9,11 +9,12 @@
     "node": "^22.19.0 || >=24.0.0"
   },
   "scripts": {
-    "test": "corepack pnpm build && node --experimental-strip-types --test src/server/__tests__/*.test.mjs",
+    "test": "corepack pnpm build && node --experimental-transform-types --test src/server/__tests__/*.test.mjs",
     "typecheck:core": "tsc -p tsconfig.core.json",
     "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@afos/model-adapter": "file:../model-adapter",
     "jose": "6.2.1"
   },
   "peerDependencies": {

@@ -113,4 +113,37 @@ describe('credential namespace and storage', () => {
     expect(await vault.save('account','test-refresh-secret')).toBe(false)
     expect(await readdir(root)).toEqual([])
   })
+  it('restores encrypted refresh state in a single flight without exposing refresh bytes', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'afos-restore-')); roots.push(root)
+    const vault = new RefreshTokenVault(root, { available: () => true, encrypt: text => Buffer.from(text.split('').reverse().join('')), decrypt: bytes => bytes.toString().split('').reverse().join('') })
+    const first = fixture(); await first.auth.login(); await first.auth.accessToken()
+    expect(await first.auth.persistRefresh(vault, 'verified-account')).toBe(true)
+    first.auth.logout()
+    const second = fixture()
+    expect(await Promise.all([second.auth.restoreRefresh(vault, 'verified-account'), second.auth.restoreRefresh(vault, 'verified-account')])).toEqual([true, true])
+    expect(second.refreshes()).toBe(1)
+    expect(await second.auth.accessToken()).toBe('access-two')
+    await expect(second.auth.restoreRefresh(vault, 'other-account')).rejects.toThrow('auth/session-already-active')
+    second.auth.logout()
+    expect(await second.auth.restoreRefresh(vault, 'missing-account')).toBe(false)
+    expect(second.auth.signedIn).toBe(false)
+  })
+  it('serializes refresh publication and retains the latest rotated token', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'afos-rotation-')); roots.push(root)
+    const vault = new RefreshTokenVault(root, { available: () => true, encrypt: text => Buffer.from(text.split('').reverse().join('')), decrypt: bytes => bytes.toString().split('').reverse().join('') })
+    const f = fixture(); await f.auth.login()
+    const save = vault.save.bind(vault)
+    let release: () => void = () => undefined
+    let entered: () => void = () => undefined
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const waiting = new Promise<void>(resolve => { entered = resolve })
+    let writes = 0
+    vault.save = async (namespace, token) => { if (++writes === 1) { entered(); await gate } return save(namespace, token) }
+    const old = f.auth.persistRefresh(vault, 'verified-account'); await waiting
+    await f.auth.accessToken()
+    const rotated = f.auth.persistRefresh(vault, 'verified-account')
+    release(); await Promise.all([old, rotated])
+    expect(await vault.load('verified-account')).toBe('refresh-two')
+    expect(writes).toBe(2)
+  })
 })

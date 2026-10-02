@@ -1,6 +1,6 @@
 /** Minimal Electron carrier for the bundled WorkDSH release profile. */
 
-import { app, BrowserWindow, shell } from 'electron'
+import { app, BrowserWindow, shell, Menu, dialog, safeStorage, powerMonitor, type MenuItemConstructorOptions } from 'electron'
 import { spawn, type ChildProcess } from 'node:child_process'
 import {
   cpSync,
@@ -18,9 +18,14 @@ import { fileURLToPath } from 'node:url'
 import { syncBundledCompatibility } from './runtime-compatibility.ts'
 import { isRuntimeDownload, isRuntimeNavigation, redactRuntimeLog, runtimeEnvironment, RuntimeLogFilter, safeExternalUrl, stopRuntimeTree } from './runtime-security.ts'
 
+import { createEnterpriseEntry } from './enterprise-entry.ts'
+import { EnterpriseMainError, type EnterpriseMainSession } from './enterprise-main.ts'
+import type { EnterpriseProject } from './enterprise-broker.ts'
+
 const PROFILE_NAME = 'workdsh'
 const READY_PATTERN = /dsh web:\s+(http:\/\/127\.0\.0\.1:\d+\/?\?token=[^\s]+)/u
 
+let enterpriseSession: EnterpriseMainSession | undefined
 let runtime: ChildProcess | undefined
 let window: BrowserWindow | undefined
 let quitting = false
@@ -230,6 +235,51 @@ async function stopRuntime(): Promise<void> {
   runtime = undefined
 }
 
+/** Native trusted account actions; the status document has no scripts or IPC. */
+function installEnterpriseEntry(): boolean {
+  enterpriseSession = createEnterpriseEntry({
+    configPath: join(app.getAppPath(), 'afos-desktop-config.json'),
+    dataDirectory: join(app.getPath('userData'), 'afos'),
+    storage: safeStorage,
+    openBrowser: async url => { await shell.openExternal(url) },
+    host: {
+      stop: async () => { if (runtime) { await stopRuntimeTree(runtime); runtime = undefined } },
+      capabilities: async () => ({ ingressValidated: false, sandbox: 'unavailable' }),
+      start: async () => { throw new EnterpriseMainError('enterprise/profile-or-sandbox-unverified') },
+    },
+  })
+  if (!enterpriseSession) return false
+  const session = enterpriseSession
+  let projects: readonly EnterpriseProject[] = []
+  const report = async (work: () => Promise<unknown>, success: string): Promise<void> => {
+    try { await work(); await dialog.showMessageBox({ type: 'info', title: 'AFOS', message: success }) }
+    catch (error) {
+      const code = error instanceof Error && /^(?:enterprise|auth|broker|afos)\/[a-z-]{1,80}$/u.test(error.message) ? error.message : 'enterprise/action-failed'
+      await dialog.showMessageBox({ type: 'error', title: 'AFOS', message: code })
+    }
+  }
+  const refreshMenu = (): void => {
+    const account: MenuItemConstructorOptions[] = [
+      { label: 'Sign in / 登录', click: () => { void report(async () => { projects = []; refreshMenu(); projects = await session.signIn(); refreshMenu() }, 'Select an allowed project from the account menu. / 请在账号菜单选择已授权项目。') } },
+      { label: 'Projects / 项目', submenu: projects.map(project => ({ label: project.name.replaceAll('&', '').slice(0, 80), click: () => { void report(() => session.selectProject(project.id), 'Account and project verified. / 账号与项目已核实。') } })) },
+      { label: 'Start enterprise Host / 启动企业 Host', click: () => { void report(() => session.startHost(), 'Enterprise Host started. / 企业 Host 已启动。') } },
+      { label: 'Sign out / 退出账号', click: () => { void report(async () => { projects = []; refreshMenu(); await session.logout() }, 'Signed out. Drafts are preserved. / 已退出账号，草稿保留。') } },
+      { role: 'quit' },
+    ]
+    Menu.setApplicationMenu(Menu.buildFromTemplate([{ label: 'AFOS', submenu: account }]))
+  }
+  refreshMenu()
+  window = new BrowserWindow({ width: 840, height: 520, title: 'AFOS', webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true } })
+  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  window.webContents.on('will-navigate', event => event.preventDefault())
+  window.webContents.session.on('will-download', event => event.preventDefault())
+  window.on('closed', () => { window = undefined })
+  const status = '<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'"><title>AFOS</title><h1>AFOS</h1><p>Use the account menu to sign in and select a project.</p><p>请通过账号菜单登录并选择项目。</p><p>Enterprise Host awaits verified profile and native isolation. / 企业 Host 等待 Profile 与原生隔离验证。</p>'
+  void window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(status)}`).catch(() => { process.stderr.write('AFOS status window failed\n'); app.quit() })
+  powerMonitor.on('suspend', () => { void session.suspend().catch(() => process.stderr.write('AFOS suspend cleanup failed\n')) })
+  return true
+}
+
 const worker = browserWorkerRequest()
 if (worker !== undefined) {
   startBrowserWorker(worker)
@@ -247,7 +297,8 @@ if (!app.requestSingleInstanceLock()) {
     if (cleanupComplete) return
     event.preventDefault()
     if (quitting) return
-    stopRuntime().then(() => { cleanupComplete = true; app.quit() }).catch(() => {
+    quitting = true
+    void (async () => { await enterpriseSession?.suspend(); await stopRuntime() })().then(() => { cleanupComplete = true; app.quit() }).catch(() => {
       process.stderr.write('WorkDSH runtime cleanup failed; application remains open\n')
       quitting = false
     })
@@ -264,6 +315,7 @@ if (!app.requestSingleInstanceLock()) {
     }
   })
   void app.whenReady().then(() => {
+    if (installEnterpriseEntry()) return
     const home = runtimeHome()
     const profile = materializeRuntimeProfile(home)
     startRuntime(home, profile)

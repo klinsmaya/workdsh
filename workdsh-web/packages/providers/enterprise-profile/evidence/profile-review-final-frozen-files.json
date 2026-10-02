@@ -1,0 +1,76 @@
+{
+  "recorded_at": "2026-10-02T19:47:01.672965+00:00",
+  "review_scope": "Final frozen source after owner fixes, tests/package/lock and matching compiled JS",
+  "files": [
+    {
+      "path": "packages/providers/enterprise-profile/src/index.ts",
+      "sha256": "6d6e0a54c9962dc3fe835dfe48a0f8fdfb10537e54f8675d022e39d0e9220b03",
+      "bytes": 148
+    },
+    {
+      "path": "packages/providers/enterprise-profile/src/ingress.ts",
+      "sha256": "e09ae35a5539a433f1c21dff434678b62f501593da2e6a45d381b060b414afd6",
+      "bytes": 17108
+    },
+    {
+      "path": "packages/providers/enterprise-profile/src/profile-policy.ts",
+      "sha256": "5a3ae768a5f89c284e957282d2bf823fc08144f82317cfc41641bdf59aef94d9",
+      "bytes": 3478
+    },
+    {
+      "path": "packages/providers/enterprise-profile/src/snapshot-authority.ts",
+      "sha256": "956bc2eea4dafdd4efda7d93f2db8619e033aa9d2cb4718345cb7254d832b5d5",
+      "bytes": 6307
+    },
+    {
+      "path": "packages/providers/enterprise-profile/tests/profile.test.mjs",
+      "sha256": "25ed5f6e6504f9b5db3371630597efa87d22dbf619b06c19baf24ea5362e39cc",
+      "bytes": 20027
+    },
+    {
+      "path": "packages/providers/enterprise-profile/package.json",
+      "sha256": "31199505e91f425a659c54728f7167727a746d474f58f4465b8e15be2251bb84",
+      "bytes": 1045
+    },
+    {
+      "path": "packages/providers/enterprise-profile/tsconfig.json",
+      "sha256": "9aa5d59e92e1db869f97f24762c6da740677fd0affc337173fbec57030083b63",
+      "bytes": 269
+    },
+    {
+      "path": "pnpm-lock.yaml",
+      "sha256": "27608a96ec08693c0b27495e9275cf2fcdcf6e1010b9a403578452db14f9a670",
+      "bytes": 939212
+    },
+    {
+      "path": "packages/contracts/src/enterprise-identity.ts",
+      "sha256": "9269d4f338124eea7a06fd14b8138787170913d1dfbade554cb0059bfb76f71c",
+      "bytes": 1755
+    },
+    {
+      "path": "packages/providers/identity-nocobase/src/authority.ts",
+      "sha256": "f83617e91aa1cf066d26ca408b953144ba94ab36d140a49b3b1a881d766ed88b",
+      "bytes": 10732
+    },
+    {
+      "path": "packages/providers/enterprise-profile/dist/index.js",
+      "sha256": "6d6e0a54c9962dc3fe835dfe48a0f8fdfb10537e54f8675d022e39d0e9220b03",
+      "bytes": 148
+    },
+    {
+      "path": "packages/providers/enterprise-profile/dist/ingress.js",
+      "sha256": "37ee36b5661ca1d0fcb2c3f9adacc33aca8ee3ef3c7aa914697f42a1224f3a09",
+      "bytes": 16270
+    },
+    {
+      "path": "packages/providers/enterprise-profile/dist/profile-policy.js",
+      "sha256": "79f5b5c7bb6da87f3ee4c3add7f454f46830840d143a2e8280fc83be4c1c771b",
+      "bytes": 3036
+    },
+    {
+      "path": "packages/providers/enterprise-profile/dist/snapshot-authority.js",
+      "sha256": "66d7e54177a52d5b302a44a65a20c93e8b9ed2eb6f21755be07623b58650b2c7",
+      "bytes": 5905
+    }
+  ]
+}

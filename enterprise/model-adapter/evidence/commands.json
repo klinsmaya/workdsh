@@ -1,0 +1,55 @@
+[
+  {
+    "label": "frozen-offline-install",
+    "command": [
+      "corepack",
+      "pnpm",
+      "install",
+      "--frozen-lockfile",
+      "--offline",
+      "--store-dir",
+      "/workspace/afos-handoff/pnpm-store"
+    ],
+    "cwd": "/workspace/afos-model/enterprise/model-adapter",
+    "startedAt": "2026-10-02T19:37:07.946923+00:00",
+    "completedAt": "2026-10-02T19:37:08.469243+00:00",
+    "exitCode": 0,
+    "stdout": "/workspace/afos-model/enterprise/model-adapter/evidence/commands/frozen-offline-install.stdout.log",
+    "stdoutSha256": "f554cef0dd6e5dc982b06593d0d12e9aab6e9f16146e7f3a01934a373c084850",
+    "stderr": "/workspace/afos-model/enterprise/model-adapter/evidence/commands/frozen-offline-install.stderr.log",
+    "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "label": "typecheck",
+    "command": [
+      "corepack",
+      "pnpm",
+      "run",
+      "typecheck"
+    ],
+    "cwd": "/workspace/afos-model/enterprise/model-adapter",
+    "startedAt": "2026-10-02T19:37:08.469349+00:00",
+    "completedAt": "2026-10-02T19:37:10.094291+00:00",
+    "exitCode": 0,
+    "stdout": "/workspace/afos-model/enterprise/model-adapter/evidence/commands/typecheck.stdout.log",
+    "stdoutSha256": "c159d6a4098bb453519a9e1c7b84341778e88009ac1aa33fff78c181a1ff4192",
+    "stderr": "/workspace/afos-model/enterprise/model-adapter/evidence/commands/typecheck.stderr.log",
+    "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "label": "tests",
+    "command": [
+      "corepack",
+      "pnpm",
+      "test"
+    ],
+    "cwd": "/workspace/afos-model/enterprise/model-adapter",
+    "startedAt": "2026-10-02T19:37:10.094375+00:00",
+    "completedAt": "2026-10-02T19:37:15.814095+00:00",
+    "exitCode": 0,
+    "stdout": "/workspace/afos-model/enterprise/model-adapter/evidence/commands/tests.stdout.log",
+    "stdoutSha256": "9abcbe71f8ea3a74fe37d9a2956e645bc323ca4254e0f3c2c1217cff6724b52e",
+    "stderr": "/workspace/afos-model/enterprise/model-adapter/evidence/commands/tests.stderr.log",
+    "stderrSha256": "29c5ee0f6b0b20dbb259b99d01276198c3d28190090706394608d4deda6d2c0b"
+  }
+]

@@ -1,0 +1,9 @@
+{
+  "workdsh-web/packages/providers/enterprise-profile/src/index.ts": "6d6e0a54c9962dc3fe835dfe48a0f8fdfb10537e54f8675d022e39d0e9220b03",
+  "workdsh-web/packages/providers/enterprise-profile/src/ingress.ts": "e09ae35a5539a433f1c21dff434678b62f501593da2e6a45d381b060b414afd6",
+  "workdsh-web/packages/providers/enterprise-profile/src/profile-policy.ts": "5a3ae768a5f89c284e957282d2bf823fc08144f82317cfc41641bdf59aef94d9",
+  "workdsh-web/packages/providers/enterprise-profile/src/snapshot-authority.ts": "956bc2eea4dafdd4efda7d93f2db8619e033aa9d2cb4718345cb7254d832b5d5",
+  "workdsh-web/packages/providers/enterprise-profile/tests/profile.test.mjs": "25ed5f6e6504f9b5db3371630597efa87d22dbf619b06c19baf24ea5362e39cc",
+  "workdsh-web/packages/providers/enterprise-profile/package.json": "31199505e91f425a659c54728f7167727a746d474f58f4465b8e15be2251bb84",
+  "workdsh-web/pnpm-lock.yaml": "27608a96ec08693c0b27495e9275cf2fcdcf6e1010b9a403578452db14f9a670"
+}

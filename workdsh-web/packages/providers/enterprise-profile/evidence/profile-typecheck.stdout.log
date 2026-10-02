@@ -1,0 +1,4 @@
+
+> workdsh-provider-enterprise-profile@0.1.0-alpha.1 typecheck /workspace/afos-profile/workdsh-web/packages/providers/enterprise-profile
+> tsc -p tsconfig.json --noEmit
+

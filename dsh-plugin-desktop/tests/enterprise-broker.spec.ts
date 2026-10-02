@@ -5,10 +5,11 @@ import { EnterpriseBroker, EnterpriseBrokerError } from '../src/enterprise-broke
 const issuer = 'https://enterprise.example/api'
 const sha = (text: string) => createHash('sha256').update(text).digest('hex')
 const input = { materialId: 'material-a', revisionId: 'v1', sha256: sha('verified source') }
-function fixture(options: { revoked?: boolean; wrongBinding?: boolean; wrongHash?: boolean; lostCommit?: boolean; malformedCommit?: boolean; denyCommit?: boolean; credentialFailureBeforeCommit?: boolean; issuedAt?: string; expiresAt?: string } = {}) {
+function fixture(options: { revoked?: boolean; wrongBinding?: boolean; wrongHash?: boolean; lostCommit?: boolean; malformedCommit?: boolean; denyCommit?: boolean; credentialFailureBeforeCommit?: boolean; issuedAt?: string; expiresAt?: string; modelBody?: ReadableStream<Uint8Array> } = {}) {
   const calls: string[] = []
   let receipt: Record<string, unknown> | undefined
   let content = ''
+  let authorization: Record<string, unknown> | undefined
   const fetcher: typeof fetch = async (url, init) => {
     expect(String(url)).toBe(`${issuer}/afos`)
     expect(init?.redirect).toBe('error')
@@ -18,21 +19,27 @@ function fixture(options: { revoked?: boolean; wrongBinding?: boolean; wrongHash
     expect(headers.has('X-Role')).toBe(false)
     expect(headers.has('X-Data-Source')).toBe(false)
     const body = JSON.parse(String(init?.body)) as { contractVersion: string; action: string; params: Record<string, unknown> }
+    if (body.contractVersion === 'afos.model.v1') return new Response(options.modelBody, { headers: { 'Content-Type': 'text/event-stream' } })
     expect(body.contractVersion).toBe('afos.bridge.v1')
     expect(body.params).not.toHaveProperty('principalId')
     expect(body.params).not.toHaveProperty('organizationId')
     calls.push(body.action)
     if (options.revoked && body.action !== 'projects.listAllowed') return Response.json({ code: 'afos/project-denied' }, { status: 403 })
     if (body.action === 'projects.listAllowed') return Response.json({ contractVersion: 'afos.bridge.v1', principalId: 'user-a', items: [{ id: 'project-a', organizationId: 'org-a', name: 'Allowed', access_token: 'must-not-escape' }], nextCursor: null, refresh_token: 'must-not-escape' })
+    if (body.action === 'identity.current') return Response.json({ contractVersion: 'afos.identity.v1',
+      binding: { issuer, subject: 'user-a', organizationId: 'org-a', deviceId: 'logical-device-a' },
+      project: { id: 'project-a', organizationId: 'org-a', name: 'Allowed' }, permissions: { read: true, archive: true },
+      authorizationRevision: sha('current-authority'), expiresAt: new Date(Date.now() + 4_500).toISOString() })
     if (body.action === 'materials.listAllowed') return Response.json({ contractVersion: 'afos.bridge.v1', items: [{ id: input.materialId, revisionId: input.revisionId, sha256: input.sha256, name: 'source' }], nextCursor: null })
     if (body.action === 'materials.readRevision') return Response.json({ contractVersion: 'afos.bridge.v1', ...input, text: options.wrongHash ? 'tampered' : 'verified source' })
-    if (body.action === 'runs.authorizeLocal') return Response.json({
+    if (body.action === 'runs.authorizeLocal') { authorization = {
       contractVersion: 'afos.run.v1', runId: 'run-a', attempt: 1,
       binding: { issuer, subject: options.wrongBinding ? 'user-b' : 'user-a', organizationId: 'org-a', deviceId: 'logical-device-a' },
       projectId: 'project-a', releaseId: 'release-a', policyRevision: 'policy-v1', inputRefs: [input],
-      allowedActions: ['materials.readRevision', 'artifacts.stageUpload', 'artifacts.commitDraft', 'runs.getReceipt'],
+      allowedActions: ['materials.readRevision', 'artifacts.stageUpload', 'artifacts.commitDraft', 'runs.getReceipt', ...(options.modelBody ? ['models.stream'] : [])],
       issuedAt: options.issuedAt ?? new Date().toISOString(), expiresAt: options.expiresAt ?? new Date(Date.now() + 600_000).toISOString(), secret: 'not-returned',
-    })
+    }; return Response.json(authorization) }
+    if (body.action === 'runs.getAuthorization') return Response.json(authorization)
     if (body.action === 'artifacts.stageUpload') return Response.json({ contractVersion: 'afos.bridge.v1', uploadId: 'upload-a', bytes: body.params.bytes, expiresAt: new Date(Date.now() + 300_000).toISOString() })
     if (body.action === 'artifacts.upload') {
       content = String(body.params.content)
@@ -45,7 +52,10 @@ function fixture(options: { revoked?: boolean; wrongBinding?: boolean; wrongHash
       if (options.malformedCommit) return Response.json([])
       return Response.json(receipt)
     }
-    if (body.action === 'runs.getReceipt') return Response.json(receipt ? { contractVersion: 'afos.bridge.v1', status: 'archived', receipt } : { contractVersion: 'afos.bridge.v1', status: 'authorized', runId: 'run-a', clientExecution: 'unknown' })
+    if (body.action === 'runs.getReceipt') {
+      if (body.params.projectId !== 'project-a') return Response.json({ code: 'afos/run-project-mismatch' }, { status: 403 })
+      return Response.json(receipt ? { contractVersion: 'afos.bridge.v1', status: 'archived', authorization, receipt } : { contractVersion: 'afos.bridge.v1', status: 'authorized', authorization, runId: 'run-a', clientExecution: 'unknown' })
+    }
     throw new Error('Unexpected action')
   }
   const broker = new EnterpriseBroker(issuer, { accessToken: async () => {
@@ -191,4 +201,86 @@ describe('trusted enterprise broker contract', () => {
     expect((await first).sha256).toBe(sha('draft'))
     expect(f.calls.filter(action => action === 'artifacts.stageUpload')).toHaveLength(1)
   })
+  it('restores handles only from current server authorization and rejects disk pin forgery', async () => {
+    const f = fixture()
+    const run = await f.ready()
+    await f.broker.selectProject('project-a')
+    expect((await f.broker.currentAuthority(run.binding)).binding).toEqual(run.binding)
+    await expect(f.broker.restoreRun({ ...run, releaseId: 'different-release' })).rejects.toThrow('broker/run-binding')
+    await expect(f.broker.restoreRun({ ...run, binding: { ...run.binding, deviceId: 'other-device' } })).rejects.toThrow('broker/authority-mismatch')
+    await expect(f.broker.restoreRun({ ...run, policyRevision: 'changed-policy' })).rejects.toThrow('broker/recovery-binding')
+    await expect(f.broker.recoverReceipt({ ...run, policyRevision: 'changed-policy' })).rejects.toThrow('broker/recovery-binding')
+    await expect(f.broker.recoverReceipt({ ...run, inputRefs: [{ ...input, sha256: 'a'.repeat(64) }] })).rejects.toThrow('broker/run-binding')
+    expect(await f.broker.restoreRun(run)).toEqual(run)
+    expect(f.broker.namespace(run.runId)).toMatch(/^[a-f0-9]{64}$/u)
+    f.options.revoked = true
+    await expect(f.broker.restoreRun(run)).rejects.toThrow('afos/project-denied')
+  })
+  it('recovers an expired durable receipt without minting a write handle, and returns prior successful archive after expiry', async () => {
+    const f = fixture()
+    const run = await f.ready()
+    const receipt = await f.broker.archiveDraft(run.runId, 'draft', 'key')
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(Date.parse(run.expiresAt) + 1)
+    try {
+      expect(await f.broker.archiveDraft(run.runId, 'draft', 'key')).toEqual(receipt)
+      expect(f.calls.filter(action => action === 'artifacts.commitDraft')).toHaveLength(1)
+      await f.broker.selectProject('project-a')
+      expect(await f.broker.recoverReceipt(run)).toEqual({ status: 'archived', receipt })
+      await expect(f.broker.archiveDraft(run.runId, 'draft', 'key')).rejects.toThrow('broker/run-not-owned')
+      await expect(f.broker.restoreRun(run)).rejects.toThrow('broker/run-expired')
+    } finally { vi.useRealTimers() }
+  })
+})
+
+
+describe('model byte lifetime', () => {
+  it('ends a pending noncooperative read on broker close even when body cancel never resolves', async () => {
+    const modelBody = new ReadableStream<Uint8Array>({ cancel: () => new Promise<void>(() => undefined) })
+    const f = fixture({ modelBody })
+    await f.ready()
+    const iterator = f.broker.modelBytes({ contractVersion: 'afos.model.v1', run: { runId: 'run-a', attempt: 1 }, callId: 'call-a', request: { messages: [], maxTokens: 1 } })
+    const next = iterator.next()
+    await new Promise(resolve => setImmediate(resolve))
+    f.broker.close()
+    await expect(next).rejects.toThrow('broker/model-cancelled')
+  })
+  it('ends a pending model read on ordinary caller cancellation', async () => {
+    const f = fixture({ modelBody: new ReadableStream<Uint8Array>() })
+    await f.ready()
+    const controller = new AbortController()
+    const next = f.broker.modelBytes({ contractVersion: 'afos.model.v1', run: { runId: 'run-a', attempt: 1 }, callId: 'call-a', request: { messages: [], maxTokens: 1 } }, controller.signal).next()
+    await new Promise(resolve => setImmediate(resolve))
+    controller.abort()
+    await expect(next).rejects.toThrow('broker/model-cancelled')
+  })
+})
+
+
+it('cancels noncooperative model fetch admission and disposes a late body', async () => {
+  const f = fixture({ modelBody: new ReadableStream<Uint8Array>() })
+  await f.ready()
+  let deliver: (response: Response) => void = () => undefined
+  let disposed = false
+  const pending = new Promise<Response>(resolve => { deliver = resolve })
+  const internal = f.broker as unknown as { fetcher: typeof fetch }
+  internal.fetcher = async () => pending
+  const next = f.broker.modelBytes({ contractVersion: 'afos.model.v1', run: { runId: 'run-a', attempt: 1 }, callId: 'call-a', request: { messages: [], maxTokens: 1 } }).next()
+  await new Promise(resolve => setImmediate(resolve))
+  f.broker.close()
+  await expect(next).rejects.toThrow('broker/model-cancelled')
+  deliver(new Response(new ReadableStream<Uint8Array>({ cancel: () => { disposed = true } }), { headers: { 'Content-Type': 'text/event-stream' } }))
+  await new Promise(resolve => setImmediate(resolve))
+  expect(disposed).toBe(true)
+})
+
+it('cancels noncooperative credential admission without dispatching model fetch', async () => {
+  const f = fixture({ modelBody: new ReadableStream<Uint8Array>() })
+  await f.ready()
+  const internal = f.broker as unknown as { credentials: { accessToken: (signal?: AbortSignal) => Promise<string> } }
+  internal.credentials.accessToken = async () => new Promise<string>(() => undefined)
+  const next = f.broker.modelBytes({ contractVersion: 'afos.model.v1', run: { runId: 'run-a', attempt: 1 }, callId: 'call-a', request: { messages: [], maxTokens: 1 } }).next()
+  await new Promise(resolve => setImmediate(resolve))
+  f.broker.close()
+  await expect(next).rejects.toThrow('broker/model-cancelled')
 })

@@ -1,0 +1,3 @@
+{"probe":"official HostConnectionService sole shared interceptor","result":"PASS"}
+{"probe":"authority only in replaceable wrapper signal","effects":1,"isError":false,"result":"BYPASS_CONFIRMED"}
+{"probe":"authority fused in captured caller signal","effects":0,"isError":true,"result":"PASS","errorCode":"ABORTED_BEFORE_DISPATCH"}

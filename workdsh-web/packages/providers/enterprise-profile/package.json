@@ -1,0 +1,12 @@
+{
+  "name": "workdsh-provider-enterprise-profile",
+  "version": "0.1.0-alpha.1",
+  "private": true,
+  "type": "module",
+  "description": "Fixed enterprise composition and trusted admission through public DSH services.",
+  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" }, "./package.json": "./package.json" },
+  "files": ["dist", "README.md", "README.zh-CN.md", "README.i18n.yaml", "REUSE.md"],
+  "scripts": { "build": "tsc -p tsconfig.json", "typecheck": "tsc -p tsconfig.json --noEmit", "test": "node --test tests/*.test.mjs" },
+  "peerDependencies": { "@deepseek-ai/cordis": "4.0.3", "@deepseek-ai/dsh-agent": "0.1.7-rc.2", "@deepseek-ai/dsh-client-connection": "0.1.7-rc.2", "@deepseek-ai/dsh-tools": "0.1.7-rc.2" },
+  "devDependencies": { "@deepseek-ai/cordis": "4.0.3", "@deepseek-ai/dsh-agent": "0.1.7-rc.2", "@deepseek-ai/dsh-client-connection": "0.1.7-rc.2", "@deepseek-ai/dsh-tools": "0.1.7-rc.2", "@deepseek-ai/dsh-scope": "0.1.7-rc.2", "@types/node": "22.19.0", "workdsh-contracts": "workspace:*" }
+}

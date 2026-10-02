@@ -1,0 +1,29 @@
+{
+  "scope": "final frozen read-only independent source review; not formal AT",
+  "matchesCurrentSource": true,
+  "sourceFiles": [
+    {
+      "file": "adapter.ts",
+      "sha256": "159657a1542338dae8b486b522ae7c34f9575668dfd145f2d9ecef4687e6700d"
+    },
+    {
+      "file": "contracts.ts",
+      "sha256": "b002ed489cae5c9cc92e82f841708d35400becff1077faf438ee7b434ae591d8"
+    },
+    {
+      "file": "gateway.ts",
+      "sha256": "ef4cf02bcec37758ea38b9b966df6bef6418159b96120c664332838c48ec42ad"
+    },
+    {
+      "file": "index.ts",
+      "sha256": "ec09cee2198d5fa20b3127b2d6497f46e62d0bf2cd706b5d0708dcdbd6229124"
+    },
+    {
+      "file": "stream.ts",
+      "sha256": "f97ae358d942394ba8d16c6fb5e2ddeaccc0ee9f9b037ec4c6737fecf1972f36"
+    }
+  ],
+  "baselineRegressionAssertions": 25,
+  "targetedFinalDeltaChecks": 3,
+  "reportSha256": "383153e2d75a4e627a15352fccdbccbba3d140a4d21e117b1fa19a169e9a1c18"
+}

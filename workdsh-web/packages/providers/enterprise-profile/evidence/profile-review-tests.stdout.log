@@ -1,0 +1,57 @@
+✔ current snapshot adapts to canonical authority without inventing admin/name and checks every operation (4.973722ms)
+✔ session read/use mapping denies foreign subject, org, owner, session and business/manage/edit requests (2.014258ms)
+✖ authority rejects tampering, extra credential fields, changed project and permanently cuts off (3.855073ms)
+✔ late server replies cannot restore cutoff or caller cancellation; network failure closes Host authority (2.095998ms)
+✖ composition forbids any extension, raw gateway, shell/MCP/browser/config/preset escape and activation (2.348914ms)
+✔ real Connection denies every raw session/restore/workspace/file/config/settings/terminal/MCP route (57.226608ms)
+✔ approved RPC rejects caller identity/URL/path extensions and unowned Session; fixed actions work (9.462571ms)
+✔ official global guard blocks missing Agent, unowned Session and dangerous global tool registration (10.593269ms)
+✔ official global guard rejects same-name scoped tool shadow and arbitrary scoped execution (7.186336ms)
+✔ fixed trusted tool uses real Tools pipeline and current body authorization (7.978818ms)
+✔ late async execute wrapper cannot bypass body current check after revocation (5.685085ms)
+✔ authority cutoff cancels original caller through public Agent.cancel despite replacement wrapper (7.922906ms)
+✔ initial trusted dispatch fuses cutoff independent of a non-loop caller cancellation handle (7.360372ms)
+✔ cutoff after network operation starts discards late response and prevents later dispatch (24.302945ms)
+✔ Gateway composition is rejected and lifecycle removes sole RPC owner, tools and guards (12.447204ms)
+ℹ tests 15
+ℹ suites 0
+ℹ pass 13
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 419.539705
+
+✖ failing tests:
+
+test at tests/profile.test.mjs:36:1
+✖ authority rejects tampering, extra credential fields, changed project and permanently cuts off (3.855073ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async TestContext.<anonymous> (file:///workspace/afos-profile/workdsh-web/packages/providers/enterprise-profile/tests/profile.test.mjs:39:5)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /invalid-authority|stale-authority/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at tests/profile.test.mjs:54:1
+✖ composition forbids any extension, raw gateway, shell/MCP/browser/config/preset escape and activation (2.348914ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at TestContext.<anonymous> (file:///workspace/afos-profile/workdsh-web/packages/providers/enterprise-profile/tests/profile.test.mjs:65:10)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1382:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:960:18)
+      at Test.postRun (node:internal/test_runner/test:1522:19)
+      at Test.run (node:internal/test_runner/test:1447:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /composition-denied/,
+    operator: 'throws',
+    diff: 'simple'
+  }

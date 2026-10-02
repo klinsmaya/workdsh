@@ -1,0 +1,32 @@
+
+> workdsh-provider-enterprise-profile@0.1.0-alpha.1 test /workspace/afos-profile/workdsh-web/packages/providers/enterprise-profile
+> node --test tests/*.test.mjs
+
+✔ current snapshot adapts to canonical authority without inventing admin/name and checks every operation (2.410336ms)
+✔ session read/use mapping denies foreign subject, org, owner, session and business/manage/edit requests (0.756309ms)
+✔ authority rejects tampering, extra credential fields, changed project and permanently cuts off (2.012475ms)
+✔ late server replies cannot restore cutoff or caller cancellation; network failure closes Host authority (1.177942ms)
+✔ composition forbids any extension, raw gateway, shell/MCP/browser/config/preset escape and activation (1.469284ms)
+✔ real Connection denies every raw session/restore/workspace/file/config/settings/terminal/MCP route (43.563079ms)
+✔ approved RPC rejects caller identity/URL/path extensions and unowned Session; fixed actions work (11.671184ms)
+✔ official global guard blocks missing Agent, unowned Session and dangerous global tool registration (7.755318ms)
+✔ official global guard rejects same-name scoped tool shadow and arbitrary scoped execution (5.879474ms)
+✔ fixed trusted tool uses real Tools pipeline and current body authorization (8.069291ms)
+✔ tool failure projects only a stable code and does not disclose bridge exception details (5.026154ms)
+✔ late async execute wrapper cannot bypass body current check after revocation (7.915191ms)
+✔ authority cutoff cancels original caller through public Agent.cancel despite replacement wrapper (5.008015ms)
+✔ initial trusted dispatch fuses cutoff independent of a non-loop caller cancellation handle (5.791447ms)
+✔ cutoff after network operation starts discards late response and prevents later dispatch (15.398296ms)
+✔ late around wrapper scoped shadow seals the tool table and aborts before unreviewed body (10.263187ms)
+✔ live registry proof rejects lookalike Agent and manual unknown original signals (3.997018ms)
+✔ public pre-step caller signal is tied to exact Agent lifecycle, including same-object re-registration (4.845045ms)
+✔ stable Host cutoff reaches public Agent cancellation outside every tool window (3.915536ms)
+✔ Gateway composition is rejected and lifecycle removes sole RPC owner, tools and guards (6.29029ms)
+ℹ tests 20
+ℹ suites 0
+ℹ pass 20
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 318.09989

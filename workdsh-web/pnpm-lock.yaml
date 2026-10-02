@@ -1265,6 +1265,30 @@ importers:
         specifier: workspace:*
         version: link:../../contracts
 
+  packages/providers/enterprise-profile:
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: 4.0.3
+        version: 4.0.3(@deepseek-ai/cordis-plugin-include@1.0.9)(@deepseek-ai/cordis-plugin-loader@1.0.5)
+      '@deepseek-ai/dsh-agent':
+        specifier: 0.1.7-rc.2
+        version: 0.1.7-rc.2(094e6cc640ed8f96196bfd9974c252de)
+      '@deepseek-ai/dsh-client-connection':
+        specifier: 0.1.7-rc.2
+        version: 0.1.7-rc.2(@deepseek-ai/cordis@4.0.3)(@deepseek-ai/dsh-invariants@0.1.7-rc.2(@deepseek-ai/cordis@4.0.3))(@deepseek-ai/dsh-scope@0.1.7-rc.2(@deepseek-ai/cordis@4.0.3)(@deepseek-ai/dsh-invariants@0.1.7-rc.2(@deepseek-ai/cordis@4.0.3)))
+      '@deepseek-ai/dsh-scope':
+        specifier: 0.1.7-rc.2
+        version: 0.1.7-rc.2(@deepseek-ai/cordis@4.0.3)(@deepseek-ai/dsh-invariants@0.1.7-rc.2(@deepseek-ai/cordis@4.0.3))
+      '@deepseek-ai/dsh-tools':
+        specifier: 0.1.7-rc.2
+        version: 0.1.7-rc.2(2b9708cc79542a11552e9b05ae684ad8)
+      '@types/node':
+        specifier: 22.19.0
+        version: 22.19.0
+      workdsh-contracts:
+        specifier: workspace:*
+        version: link:../../contracts
+
   packages/providers/identity-local:
     dependencies:
       '@deepseek-ai/schemastery':

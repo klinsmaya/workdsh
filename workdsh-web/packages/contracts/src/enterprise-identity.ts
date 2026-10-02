@@ -11,6 +11,16 @@ export interface EnterpriseBinding {
   readonly deviceId: string;
 }
 
+/** Fixed server wire DTO. Roles and identity are derived from current server records. */
+export interface GatewayAuthoritySnapshot {
+  readonly contractVersion: 'afos.identity.v1';
+  readonly binding: EnterpriseBinding;
+  readonly project: { readonly id: string; readonly organizationId: string; readonly name: string };
+  readonly permissions: { readonly read: true; readonly archive: boolean };
+  readonly authorizationRevision: string;
+  readonly expiresAt: string;
+}
+
 /** Current verified NocoBase state, not a persisted local enterprise member database. */
 export interface EnterpriseAuthorityState {
   readonly binding: EnterpriseBinding;

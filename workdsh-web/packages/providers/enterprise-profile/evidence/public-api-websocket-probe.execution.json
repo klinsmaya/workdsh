@@ -1,0 +1,18 @@
+{
+  "probe": "public-api-websocket-probe",
+  "command": [
+    "node",
+    "packages/providers/enterprise-profile/evidence/public-api-websocket-probe.mjs"
+  ],
+  "cwd": "/workspace/afos-profile/workdsh-web",
+  "started_at": "2026-10-02T19:25:58.874282+00:00",
+  "ended_at": "2026-10-02T19:25:59.098154+00:00",
+  "exit_code": 0,
+  "stdout_file": "public-api-websocket-probe.stdout.log",
+  "stderr_file": "public-api-websocket-probe.stderr.log",
+  "stdout_sha256": "a9b104bc2af82f280aa7296b4e8210b8c24c3e23ad4fe3aa99103ff1d0a05902",
+  "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "script_sha256": "9673feda7150af0e294d432e90e088de2f23b7a4498f2c2caebc2ac1646ec3f0",
+  "acceptance_status": "NOT_AN_AT_PASS",
+  "scope": "Published DSH public API fixture evidence; no real enterprise IdP, model, sandbox, or target desktop acceptance."
+}

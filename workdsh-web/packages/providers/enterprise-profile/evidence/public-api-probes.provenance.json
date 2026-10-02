@@ -1,0 +1,96 @@
+{
+  "node_version": "v24.19.0",
+  "workspace": "/workspace/afos-profile/workdsh-web",
+  "lockfile": "/workspace/afos-profile/workdsh-web/pnpm-lock.yaml",
+  "lockfile_sha256": "07dc8380e6c4435e2b51e1e8d306a26b1254f9a0cdb827abced1c70a969b34c4",
+  "packages": [
+    {
+      "name": "@deepseek-ai/dsh-client-connection",
+      "version": "0.1.7-rc.2",
+      "git_head": null,
+      "package_json": "/workspace/afos-profile/workdsh-web/node_modules/.pnpm/@deepseek-ai+dsh-client-connection@0.1.7-rc.2_@deepseek-ai+cordis@4.0.3_@deepseek-ai+ds_3b5c23f2539f904b443a72f724a4dcb2/node_modules/@deepseek-ai/dsh-client-connection/package.json",
+      "package_json_sha256": "fcfd82ad2c773dba418872ad0d2a4858ab15bce19a4148405aea5266a79a54bd",
+      "public_root_export": {
+        "types": "./lib/types/index.d.ts",
+        "default": "./lib/index.js"
+      },
+      "runtime_file": "/workspace/afos-profile/workdsh-web/node_modules/.pnpm/@deepseek-ai+dsh-client-connection@0.1.7-rc.2_@deepseek-ai+cordis@4.0.3_@deepseek-ai+ds_3b5c23f2539f904b443a72f724a4dcb2/node_modules/@deepseek-ai/dsh-client-connection/lib/index.js",
+      "runtime_sha256": "3950f524aed44e28240140a254cd928ea40eba8e2d04cc8fd04f92a687f5c91d",
+      "types_file": "/workspace/afos-profile/workdsh-web/node_modules/.pnpm/@deepseek-ai+dsh-client-connection@0.1.7-rc.2_@deepseek-ai+cordis@4.0.3_@deepseek-ai+ds_3b5c23f2539f904b443a72f724a4dcb2/node_modules/@deepseek-ai/dsh-client-connection/lib/types/index.d.ts",
+      "types_sha256": "d83649e8d3f48e7e28fe930df033632ae303843d5512ddd1b81a2098d4e33d78"
+    },
+    {
+      "name": "@deepseek-ai/dsh-api-gateway",
+      "version": "0.1.7-rc.2",
+      "git_head": null,
+      "package_json": "/workspace/afos-profile/workdsh-web/node_modules/.pnpm/@deepseek-ai+dsh-api-gateway@0.1.7-rc.2_@deepseek-ai+cordis@4.0.3_@deepseek-ai+dsh-clie_15a9293085db1145293ca5fb4a844ab1/node_modules/@deepseek-ai/dsh-api-gateway/package.json",
+      "package_json_sha256": "3d5a6a5cb2a80d1a66ea7e97397bd540479162dfbcf40851cc56b7d0e56849be",
+      "public_root_export": {
+        "types": "./lib/types/index.d.ts",
+        "default": "./lib/index.js"
+      },
+      "runtime_file": "/workspace/afos-profile/workdsh-web/node_modules/.pnpm/@deepseek-ai+dsh-api-gateway@0.1.7-rc.2_@deepseek-ai+cordis@4.0.3_@deepseek-ai+dsh-clie_15a9293085db1145293ca5fb4a844ab1/node_modules/@deepseek-ai/dsh-api-gateway/lib/index.js",
+      "runtime_sha256": "ab72e05df730f474737be99e0035f5bd7152433f8a817d3d037876087e993172",
+      "types_file": "/workspace/afos-profile/workdsh-web/node_modules/.pnpm/@deepseek-ai+dsh-api-gateway@0.1.7-rc.2_@deepseek-ai+cordis@4.0.3_@deepseek-ai+dsh-clie_15a9293085db1145293ca5fb4a844ab1/node_modules/@deepseek-ai/dsh-api-gateway/lib/types/index.d.ts",
+      "types_sha256": "ded6adae9abe0d82112167da66d53f519dcaf44e9bcda9c27d7df84008ab20bc"
+    },
+    {
+      "name": "@deepseek-ai/dsh-host-webserver",
+      "version": "0.1.7-rc.2",
+      "git_head": null,
+      "package_json": "/workspace/afos-profile/workdsh-web/node_modules/.pnpm/@deepseek-ai+dsh-host-webserver@0.1.7-rc.2_@deepseek-ai+cordis@4.0.3/node_modules/@deepseek-ai/dsh-host-webserver/package.json",
+      "package_json_sha256": "3d615a595b70cd55b0b3b3e5cce138a26e1f2d345e21705709d9dea26ffd7176",
+      "public_root_export": {
+        "types": "./lib/types/index.d.ts",
+        "default": "./lib/index.js"
+      },
+      "runtime_file": "/workspace/afos-profile/workdsh-web/node_modules/.pnpm/@deepseek-ai+dsh-host-webserver@0.1.7-rc.2_@deepseek-ai+cordis@4.0.3/node_modules/@deepseek-ai/dsh-host-webserver/lib/index.js",
+      "runtime_sha256": "6efea1375eadeff62d5cfb6d1f515ff75a939d40405a62e5d138e8e7a6b18df5",
+      "types_file": "/workspace/afos-profile/workdsh-web/node_modules/.pnpm/@deepseek-ai+dsh-host-webserver@0.1.7-rc.2_@deepseek-ai+cordis@4.0.3/node_modules/@deepseek-ai/dsh-host-webserver/lib/types/index.d.ts",
+      "types_sha256": "342d45c37bfa5f17197cc2692057b112b795924d40f3b0d337d8fe156867641d"
+    },
+    {
+      "name": "@deepseek-ai/dsh-typert-registry",
+      "version": "0.1.7-rc.2",
+      "git_head": null,
+      "package_json": "/workspace/afos-profile/workdsh-web/node_modules/.pnpm/@deepseek-ai+dsh-typert-registry@0.1.7-rc.2_@deepseek-ai+cordis@4.0.3/node_modules/@deepseek-ai/dsh-typert-registry/package.json",
+      "package_json_sha256": "f221010e6ae479fe738015d147bd1f7b3c080928d616e785b6514d7f415cfcd3",
+      "public_root_export": {
+        "types": "./lib/types/index.d.ts",
+        "default": "./lib/index.js"
+      },
+      "runtime_file": "/workspace/afos-profile/workdsh-web/node_modules/.pnpm/@deepseek-ai+dsh-typert-registry@0.1.7-rc.2_@deepseek-ai+cordis@4.0.3/node_modules/@deepseek-ai/dsh-typert-registry/lib/index.js",
+      "runtime_sha256": "d52e98d35cfe8919dd6d6c46a2f4644a3c0135a0ed70c06a66d0cccd1fe12d82",
+      "types_file": "/workspace/afos-profile/workdsh-web/node_modules/.pnpm/@deepseek-ai+dsh-typert-registry@0.1.7-rc.2_@deepseek-ai+cordis@4.0.3/node_modules/@deepseek-ai/dsh-typert-registry/lib/types/index.d.ts",
+      "types_sha256": "b626e9563f14265931b737ef782ebee8095f1228e1076e79712b3554a445acfa"
+    },
+    {
+      "name": "@deepseek-ai/dsh-tools",
+      "version": "0.1.7-rc.2",
+      "resolved_entry": "/workspace/afos-profile/workdsh-web/node_modules/.pnpm/@deepseek-ai+dsh-tools@0.1.7-rc.2_2b9708cc79542a11552e9b05ae684ad8/node_modules/@deepseek-ai/dsh-tools/lib/index.js",
+      "real_entry": "/workspace/afos-profile/workdsh-web/node_modules/.pnpm/@deepseek-ai+dsh-tools@0.1.7-rc.2_2b9708cc79542a11552e9b05ae684ad8/node_modules/@deepseek-ai/dsh-tools/lib/index.js",
+      "entry_sha256": "40f47709337c3c205d4e09e647f8588f4977e66f6d52f019b3cc7ef81159d84f",
+      "package_json": "/workspace/afos-profile/workdsh-web/node_modules/.pnpm/@deepseek-ai+dsh-tools@0.1.7-rc.2_2b9708cc79542a11552e9b05ae684ad8/node_modules/@deepseek-ai/dsh-tools/package.json",
+      "package_json_sha256": "12bda14a4753f2c2202d607e2bcf77236817bc6f17a827421c7f353ac2d917e5"
+    },
+    {
+      "name": "@deepseek-ai/dsh-typert-protocol",
+      "version": "0.1.7-rc.2",
+      "resolved_entry": "/workspace/afos-profile/workdsh-web/node_modules/.pnpm/@deepseek-ai+dsh-typert-protocol@0.1.7-rc.2_@deepseek-ai+cordis@4.0.3/node_modules/@deepseek-ai/dsh-typert-protocol/lib/index.js",
+      "real_entry": "/workspace/afos-profile/workdsh-web/node_modules/.pnpm/@deepseek-ai+dsh-typert-protocol@0.1.7-rc.2_@deepseek-ai+cordis@4.0.3/node_modules/@deepseek-ai/dsh-typert-protocol/lib/index.js",
+      "entry_sha256": "f7e0fa4b750267f6adaa1b901be7987f0d830800ec3a05f247251bf77de0b809",
+      "package_json": "/workspace/afos-profile/workdsh-web/node_modules/.pnpm/@deepseek-ai+dsh-typert-protocol@0.1.7-rc.2_@deepseek-ai+cordis@4.0.3/node_modules/@deepseek-ai/dsh-typert-protocol/package.json",
+      "package_json_sha256": "56dc0d354f4d19615e2c1ef40838eb3aa16f3d4b0ab1ee3ea5f423b41031c7f6"
+    },
+    {
+      "name": "@deepseek-ai/cordis",
+      "version": "4.0.3",
+      "resolved_entry": "/workspace/afos-profile/workdsh-web/node_modules/.pnpm/@deepseek-ai+cordis@4.0.3_@deepseek-ai+cordis-plugin-include@1.0.9_@deepseek-ai+cordis-plugin-loader@1.0.5/node_modules/@deepseek-ai/cordis/lib/index.js",
+      "real_entry": "/workspace/afos-profile/workdsh-web/node_modules/.pnpm/@deepseek-ai+cordis@4.0.3_@deepseek-ai+cordis-plugin-include@1.0.9_@deepseek-ai+cordis-plugin-loader@1.0.5/node_modules/@deepseek-ai/cordis/lib/index.js",
+      "entry_sha256": "6a9394c0877ff45218818c6e815edd038f8057e1a1deb390a8d43ec81c57691e",
+      "package_json": "/workspace/afos-profile/workdsh-web/node_modules/.pnpm/@deepseek-ai+cordis@4.0.3_@deepseek-ai+cordis-plugin-include@1.0.9_@deepseek-ai+cordis-plugin-loader@1.0.5/node_modules/@deepseek-ai/cordis/package.json",
+      "package_json_sha256": "aa4becd27e7a58f0c46806e102e0bebc187a475b85833a584ec40a8c5f1b9d10"
+    }
+  ],
+  "formal_acceptance_pass": false
+}

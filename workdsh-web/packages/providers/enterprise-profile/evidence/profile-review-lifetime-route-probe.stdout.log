@@ -1,0 +1,2 @@
+{"probe":"accepted native-loop signal remains live when Host cutoff occurs outside tool window","callerAborted":false,"cancellations":0,"result":"GAP_CONFIRMED","scope":"Real public AgentRegistry with fixture driver; no real official loop acceptance."}
+{"probe":"exact Fetch owner has precedence over shared RPC interceptor even after profile cutoff","status":200,"exactEffects":1,"result":"COMPOSITION_BOUNDARY_CONFIRMED","scope":"Requires trusted same-process route registration; demonstrates why real loader/route composition must be restricted."}

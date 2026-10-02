@@ -1,0 +1,28 @@
+✔ current snapshot adapts to canonical authority without inventing admin/name and checks every operation (3.055951ms)
+✔ session read/use mapping denies foreign subject, org, owner, session and business/manage/edit requests (1.073429ms)
+✔ authority rejects tampering, extra credential fields, changed project and permanently cuts off (2.457338ms)
+✔ late server replies cannot restore cutoff or caller cancellation; network failure closes Host authority (0.750818ms)
+✔ composition forbids any extension, raw gateway, shell/MCP/browser/config/preset escape and activation (1.460708ms)
+✔ real Connection denies every raw session/restore/workspace/file/config/settings/terminal/MCP route (62.64662ms)
+✔ approved RPC rejects caller identity/URL/path extensions and unowned Session; fixed actions work (11.697864ms)
+✔ official global guard blocks missing Agent, unowned Session and dangerous global tool registration (8.471233ms)
+✔ official global guard rejects same-name scoped tool shadow and arbitrary scoped execution (9.540943ms)
+✔ fixed trusted tool uses real Tools pipeline and current body authorization (9.856433ms)
+✔ tool failure projects only a stable code and does not disclose bridge exception details (6.845175ms)
+✔ late async execute wrapper cannot bypass body current check after revocation (7.773029ms)
+✔ authority cutoff cancels original caller through public Agent.cancel despite replacement wrapper (8.155352ms)
+✔ initial trusted dispatch fuses cutoff independent of a non-loop caller cancellation handle (8.656613ms)
+✔ cutoff after network operation starts discards late response and prevents later dispatch (24.871457ms)
+✔ late around wrapper scoped shadow seals the tool table and aborts before unreviewed body (13.469128ms)
+✔ live registry proof rejects lookalike Agent and manual unknown original signals (6.131276ms)
+✔ public pre-step caller signal is tied to exact Agent lifecycle, including same-object re-registration (8.298648ms)
+✔ stable Host cutoff reaches public Agent cancellation outside every tool window (5.408478ms)
+✔ Gateway composition is rejected and lifecycle removes sole RPC owner, tools and guards (12.478801ms)
+ℹ tests 20
+ℹ suites 0
+ℹ pass 20
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 416.846254

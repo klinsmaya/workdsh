@@ -1,0 +1,54 @@
+{
+  "sourceResearch": {
+    "repository": "https://github.com/deepseek-ai/deepseek-harness",
+    "head": "477b4f420553e8a52c2fbccc464d7561b239c443",
+    "version": "0.1.7-rc.2",
+    "readOnly": true
+  },
+  "installed": {
+    "@deepseek-ai/dsh-llm": {
+      "version": "0.1.7-rc.2",
+      "gitHead": null,
+      "peerDependencies": {
+        "@deepseek-ai/cordis": "~4.0.4"
+      },
+      "manifestSha256": "fd123bcf2dfd8f165315baa345e939039ef6d8153bb19bc73cbff6d03987e717"
+    },
+    "@deepseek-ai/dsh-llm-deepseek": {
+      "version": "0.1.7-rc.2",
+      "gitHead": null,
+      "peerDependencies": {
+        "@deepseek-ai/cordis": "~4.0.4",
+        "@deepseek-ai/dsh-anonymous-user-id": "0.1.7-rc.2",
+        "@deepseek-ai/dsh-atomic-write": "0.1.7-rc.2",
+        "@deepseek-ai/dsh-attachment": "0.1.7-rc.2",
+        "@deepseek-ai/dsh-deepseek-llm-api-extensions": "0.1.7-rc.2",
+        "@deepseek-ai/dsh-fs": "0.1.7-rc.2",
+        "@deepseek-ai/dsh-home-paths": "0.1.7-rc.2",
+        "@deepseek-ai/dsh-launch-environment": "0.1.7-rc.2",
+        "@deepseek-ai/dsh-llm": "0.1.7-rc.2",
+        "@deepseek-ai/dsh-timeout": "0.1.7-rc.2",
+        "@deepseek-ai/cordis-plugin-loader": "~1.0.5"
+      },
+      "manifestSha256": "6d21e612913b49c6663c213a18f94582a7968d4237dbc2e0f4ca257df9ba3bbe"
+    },
+    "@deepseek-ai/cordis": {
+      "version": "4.0.3",
+      "gitHead": null,
+      "peerDependencies": {
+        "@deepseek-ai/cordis-plugin-include": "^1.0.8",
+        "@deepseek-ai/cordis-plugin-loader": "^1.0.4"
+      },
+      "manifestSha256": "aa4becd27e7a58f0c46806e102e0bebc187a475b85833a584ec40a8c5f1b9d10"
+    }
+  },
+  "lockSha256": "474b393bed93c41c338cf7873d8ad8450c1bf26b6fb9a086404ba56e99c0e104",
+  "publicAPIProbe": "PASS_OFFLINE_REAL_PUBLISHED_RUNTIME",
+  "sourceNpmEquivalence": "NOT_PROVEN",
+  "crossRuntimeExchange": "NOT_RUN",
+  "peerDifference": "Published DSH requires Cordis~4.0.4; current WorkDSH lock and this component probe retain Cordis4.0.3",
+  "providerPathObserved": "fixed configured Messages baseURL normalized by official public adapter to /v1/messages",
+  "liveProvider": "NOT_RUN",
+  "productionLedger": "NOT_RUN",
+  "serverCurrentAuthority": "NOT_RUN"
+}

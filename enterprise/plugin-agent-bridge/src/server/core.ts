@@ -1,8 +1,8 @@
 import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { AccessEvidence } from './auth.js';
 
-export type Action = 'projects.listAllowed' | 'materials.listAllowed' | 'materials.readRevision' | 'runs.authorizeLocal' | 'artifacts.stageUpload' | 'artifacts.upload' | 'artifacts.commitDraft' | 'runs.getReceipt';
-export const actions: readonly Action[] = Object.freeze(['projects.listAllowed', 'materials.listAllowed', 'materials.readRevision', 'runs.authorizeLocal', 'artifacts.stageUpload', 'artifacts.upload', 'artifacts.commitDraft', 'runs.getReceipt']);
+export type Action = 'identity.current' | 'projects.listAllowed' | 'materials.listAllowed' | 'materials.readRevision' | 'runs.authorizeLocal' | 'runs.getAuthorization' | 'artifacts.stageUpload' | 'artifacts.upload' | 'artifacts.commitDraft' | 'runs.getReceipt';
+export const actions: readonly Action[] = Object.freeze(['identity.current','projects.listAllowed', 'materials.listAllowed', 'materials.readRevision', 'runs.authorizeLocal', 'runs.getAuthorization','artifacts.stageUpload', 'artifacts.upload', 'artifacts.commitDraft', 'runs.getReceipt']);
 export const contractVersion = 'afos.bridge.v1';
 export interface Project { id: string; organizationId: string; name: string }
 export interface Material { id: string; projectId: string; revisionId: string; hash: string; name: string; text: string }
@@ -15,14 +15,15 @@ export interface Artifact { id: string; projectId: string; runId: string; revisi
 export interface CommitRequest { id:string; runId:string; requestHash:string }
 export interface Tables { runs: Run; uploads: Upload; receipts: Receipt; artifacts: Artifact; commitRequests:CommitRequest }
 export interface Actor { principalId: string; organizationId: string }
+export interface StorePage<T> { items:T[]; nextPosition:string|null }
 
 /** NocoBase adapter must implement current membership + record/field ACL, not cached roles. */
 export interface BridgeStore {
   tokenActive(evidence: AccessEvidence): Promise<boolean>;
   deviceId(evidence: AccessEvidence): Promise<string | undefined>;
-  projects(evidence: AccessEvidence): Promise<Project[]>;
+  projects(evidence: AccessEvidence, after?:string): Promise<StorePage<Project>>;
   project(evidence: AccessEvidence, projectId: string, mode: 'read' | 'archive'): Promise<Project | undefined>;
-  materials(evidence: AccessEvidence, projectId: string): Promise<MaterialSummary[]>;
+  materials(evidence: AccessEvidence, projectId: string, after?:string): Promise<StorePage<MaterialSummary>>;
   material(evidence: AccessEvidence, materialId: string, revisionId: string): Promise<Material | undefined>;
   get<K extends keyof Tables>(table: K, id: string): Promise<Tables[K] | undefined>;
   insert<K extends keyof Tables>(table: K, value: Tables[K]): Promise<void>;
@@ -44,13 +45,14 @@ function exact(value: Record<string,unknown>, allowed: readonly string[]): void 
   if (Object.keys(value).some(key => !allowed.includes(key))) fail(400,'afos/unexpected-parameter');
 }
 const parameterKeys: Record<Action,readonly string[]> = {
+  'identity.current':['projectId'], 'runs.getAuthorization':['runId'],
   'projects.listAllowed':['cursor'], 'materials.listAllowed':['projectId','cursor'],
   'materials.readRevision':['materialId','revisionId'],
   'runs.authorizeLocal':['projectId','releaseId','inputRefs','clientRequestId'],
   'artifacts.stageUpload':['runId','attempt','mime','bytes','sha256'],
   'artifacts.upload':['runId','attempt','uploadId','content'],
   'artifacts.commitDraft':['runId','attempt','uploadId','inputRefs','clientRequestId'],
-  'runs.getReceipt':['runId'],
+  'runs.getReceipt':['runId','projectId'],
 };
 function id(value: unknown, maximum=256): string {
   if (typeof value !== 'string' || value.length < 1 || value.length > maximum || /[\u0000-\u001f]/u.test(value)) fail(400, 'afos/invalid-id');
@@ -78,11 +80,22 @@ export class AgentBridge {
   readonly releaseId: string;
   readonly policyRevision: string;
   private readonly cursorKey: Uint8Array;
-  constructor(store: BridgeStore, releaseId: string, policyRevision = 'afos.policy.v1', cursorKey: Uint8Array = randomBytes(32)) { this.store = store; this.releaseId = id(releaseId,128); this.policyRevision=id(policyRevision,128); if(cursorKey.byteLength<32)throw new Error('afos/invalid-cursor-key');this.cursorKey=Uint8Array.from(cursorKey); }
+  constructor(store: BridgeStore, releaseId: string, policyRevision = 'afos.policy.v1', cursorKey: Uint8Array = randomBytes(32), private readonly modelEnabled = false) { this.store = store; this.releaseId = id(releaseId,128); this.policyRevision=id(policyRevision,128); if(cursorKey.byteLength<32)throw new Error('afos/invalid-cursor-key');this.cursorKey=Uint8Array.from(cursorKey); }
 
-  private page(evidence:AccessEvidence, action:Action, context:unknown, cursor:unknown, length:number) {
-    const binding=digest(JSON.stringify([evidence.issuer,evidence.principalId,action,context]));
-    let offset=0;
+  /** Trusted model gateway only; not a generic public permission query. */
+  async authorizeModel(evidence:AccessEvidence,reference:{runId:string;attempt:number}):Promise<Run> {
+    if(!this.modelEnabled)fail(403,'afos/model-disabled');
+    return this.store.transaction(async store=>{
+      if(evidence.expiresAt<=Date.now()||!await store.tokenActive(evidence))fail(401,'afos/access-revoked');
+      const run=await this.run(store,evidence,id(reference.runId),'read');
+      if(run.attempt!==reference.attempt||!run.allowedActions.includes('models.stream'))fail(403,'afos/run-action-denied');
+      return run;
+    });
+  }
+
+  private page(evidence:AccessEvidence, action:Action, context:unknown, cursor:unknown) {
+    const binding=digest(JSON.stringify([evidence.issuer,evidence.principalId,evidence.clientId,evidence.grantId,action,context,this.policyRevision]));
+    let position:string|undefined;
     if(cursor!==undefined){
       if(typeof cursor!=='string'||cursor.length>1024)fail(400,'afos/invalid-cursor');
       const [encoded,signature,...extra]=cursor.split('.');
@@ -92,13 +105,16 @@ export class AgentBridge {
       if(received.length!==expected.length||!timingSafeEqual(received,expected))fail(400,'afos/invalid-cursor');
       let decoded:Record<string,unknown>;
       try { decoded=object(JSON.parse(Buffer.from(encoded,'base64url').toString('utf8'))); } catch { fail(400,'afos/invalid-cursor'); }
-      exact(decoded,['offset','binding','expiresAt']);
-      if(decoded.binding!==binding||typeof decoded.expiresAt!=='number'||decoded.expiresAt<=Date.now()||typeof decoded.offset!=='number'||!Number.isSafeInteger(decoded.offset)||decoded.offset<0)fail(400,'afos/invalid-cursor');
-      offset=decoded.offset;
+      exact(decoded,['position','binding','expiresAt']);
+      if(decoded.binding!==binding||typeof decoded.expiresAt!=='number'||decoded.expiresAt<=Date.now())fail(400,'afos/invalid-cursor');
+      position=id(decoded.position);
     }
-    let nextCursor:string|null=null;
-    if(length>offset+50){const encoded=Buffer.from(JSON.stringify({offset:offset+50,binding,expiresAt:Date.now()+10*60_000})).toString('base64url');nextCursor=`${encoded}.${createHmac('sha256',this.cursorKey).update(encoded).digest('base64url')}`;}
-    return {offset,nextCursor};
+    return {position,next:(nextPosition:string|null):string|null=>{
+      if(nextPosition===null)return null;
+      if(nextPosition===position)fail(503,'afos/non-advancing-page');
+      const encoded=Buffer.from(JSON.stringify({position:id(nextPosition),binding,expiresAt:Math.min(evidence.expiresAt,Date.now()+10*60_000)})).toString('base64url');
+      return `${encoded}.${createHmac('sha256',this.cursorKey).update(encoded).digest('base64url')}`;
+    }};
   }
 
   async dispatch(evidence: AccessEvidence, actionValue: unknown, value: unknown): Promise<unknown> {
@@ -132,7 +148,7 @@ export class AgentBridge {
     const run = await store.get('runs', runId);
     if (!run || run.principalId !== evidence.principalId) fail(404, 'afos/run-not-found');
     if (run.expiresAt <= Date.now()) fail(403, 'afos/run-expired');
-    if (run.issuer!==evidence.issuer || run.deviceId!==await store.deviceId(evidence) || run.policyRevision!==this.policyRevision) fail(403,'afos/run-binding-changed');
+    if (run.issuer!==evidence.issuer || run.deviceId!==await store.deviceId(evidence) || run.policyRevision!==this.policyRevision || run.releaseId!==this.releaseId) fail(403,'afos/run-binding-changed');
     const project = await this.project(store, evidence, run.projectId, mode);
     if (project.organizationId !== run.organizationId) fail(403, 'afos/organization-changed');
     for (const ref of run.inputs) {
@@ -142,17 +158,29 @@ export class AgentBridge {
     return run;
   }
   private async execute(store: BridgeStore, evidence: AccessEvidence, action: Action, p: Record<string, unknown>): Promise<unknown> {
+    if (action === 'identity.current') {
+      const project=await this.project(store,evidence,id(p.projectId));
+      const deviceId=id(await store.deviceId(evidence));
+      let archive=false;
+      try { archive=Boolean(await store.project(evidence,project.id,'archive')); }
+      catch(error) { if(!(error&&typeof error==='object'&&'status' in error&&error.status===403))throw error; }
+      return {contractVersion:'afos.identity.v1',binding:{issuer:evidence.issuer,subject:evidence.principalId,organizationId:project.organizationId,deviceId},project,
+        permissions:{read:true,archive},authorizationRevision:digest(JSON.stringify([evidence.issuer,evidence.principalId,evidence.clientId,evidence.grantId,deviceId,project.id,project.organizationId,archive,this.policyRevision])),expiresAt:new Date(Math.min(evidence.expiresAt,Date.now()+5_000)).toISOString()};
+    }
+    if(action==='runs.getAuthorization')return wireRun(await this.run(store,evidence,id(p.runId),'read'));
     if (action === 'projects.listAllowed') {
-      const projects = await store.projects(evidence);
-      const {offset,nextCursor}=this.page(evidence,action,[...new Set(projects.map(p=>p.organizationId))].sort(),p.cursor,projects.length);
-      return {contractVersion, principalId: evidence.principalId, items: projects.slice(offset, offset + 50).map(({id, organizationId, name}) => ({id, organizationId, name})), nextCursor};
+      const page=this.page(evidence,action,['current-memberships',await store.deviceId(evidence)],p.cursor);
+      const projects = await store.projects(evidence,page.position);
+      if(projects.items.length>50)fail(503,'afos/page-too-large');
+      return {contractVersion, principalId: evidence.principalId, items: projects.items.map(({id, organizationId, name}) => ({id, organizationId, name})), nextCursor:page.next(projects.nextPosition)};
     }
     if (action === 'materials.listAllowed') {
       const projectId = id(p.projectId);
       const project=await this.project(store, evidence, projectId);
-      const materials = await store.materials(evidence, projectId);
-      const {offset,nextCursor}=this.page(evidence,action,[project.organizationId,projectId],p.cursor,materials.length);
-      return {contractVersion,items: materials.slice(offset, offset + 50).map(({id, revisionId, hash, name}) => ({id, revisionId, sha256:hash, name})), nextCursor};
+      const page=this.page(evidence,action,[project.organizationId,projectId,await store.deviceId(evidence)],p.cursor);
+      const materials = await store.materials(evidence, projectId,page.position);
+      if(materials.items.length>50)fail(503,'afos/page-too-large');
+      return {contractVersion,items: materials.items.map(({id, revisionId, hash, name}) => ({id, revisionId, sha256:hash, name})), nextCursor:page.next(materials.nextPosition)};
     }
     if (action === 'materials.readRevision') {
       const material = await store.material(evidence, id(p.materialId), id(p.revisionId));
@@ -167,6 +195,7 @@ export class AgentBridge {
       if (p.releaseId !== this.releaseId) fail(403, 'afos/release-not-allowed');
       const deviceId=id(await store.deviceId(evidence));
       const allowedActions=['materials.readRevision','runs.getReceipt'];
+      if(this.modelEnabled)allowedActions.push('models.stream');
       try { if(await store.project(evidence,project.id,'archive'))allowedActions.push('artifacts.stageUpload','artifacts.commitDraft'); }
       catch(error) { if(!(error&&typeof error==='object'&&'status' in error&&error.status===403))throw error; }
       const inputs = inputRefs(p.inputRefs);
@@ -189,10 +218,12 @@ export class AgentBridge {
     if (action === 'runs.getReceipt') {
       const run = await store.get('runs', id(p.runId));
       if (!run || run.principalId !== evidence.principalId) fail(404, 'afos/run-not-found');
+      if(run.issuer!==evidence.issuer||run.deviceId!==await store.deviceId(evidence))fail(403,'afos/run-binding-changed');
+      if(run.projectId!==id(p.projectId))fail(403,'afos/run-project-mismatch');
       const project = await this.project(store, evidence, run.projectId);
       if (project.organizationId !== run.organizationId) fail(403, 'afos/organization-changed');
       const receipt = await store.get('receipts', run.id);
-      return receipt ? {contractVersion, status: 'archived', receipt:wireReceipt(receipt) } : {contractVersion, status: run.expiresAt <= Date.now() ? 'expired' : 'authorized', runId: run.id, clientExecution: 'unknown' };
+      return receipt ? {contractVersion, status: 'archived', authorization:wireRun(run),receipt:wireReceipt(receipt) } : {contractVersion, status: run.expiresAt <= Date.now() ? 'expired' : 'authorized', authorization:wireRun(run),runId: run.id, clientExecution: 'unknown' };
     }
     const run = await this.run(store, evidence, id(p.runId), 'archive');
     if(!run.allowedActions.includes(action==='artifacts.upload'?'artifacts.stageUpload':action))fail(403,'afos/run-action-denied');

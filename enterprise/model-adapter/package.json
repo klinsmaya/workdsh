@@ -1,0 +1,28 @@
+{
+  "name": "@afos/model-adapter",
+  "version": "0.1.0-alpha.1",
+  "private": true,
+  "type": "module",
+  "description": "Fixed AFOS model transport using official DSH LlmAdapter and DeepSeekAdapter",
+  "packageManager": "pnpm@10.34.5",
+  "engines": { "node": "^22.19.0 || >=24.0.0" },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist", "README.md", "README.zh-CN.md", "README.i18n.yaml", "REUSE.md"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "pnpm run build && node --test tests/*.test.mjs"
+  },
+  "dependencies": { "@deepseek-ai/dsh-llm-deepseek": "0.1.7-rc.2" },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "4.0.3",
+    "@deepseek-ai/dsh-llm": "0.1.7-rc.2"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.3",
+    "@deepseek-ai/dsh-llm": "0.1.7-rc.2",
+    "@types/node": "22.20.0",
+    "typescript": "6.0.3"
+  }
+}

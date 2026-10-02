@@ -1,0 +1,227 @@
+{
+  "recorded_at": "2026-10-02T19:50:16.459920+00:00",
+  "reviewer_task": "/root/afos_profile_continuation/profile_api_review",
+  "source_workspace": "/workspace/afos-profile/workdsh-web",
+  "scope": "Frozen enterprise-profile src/tests/package/lock, public ABI, public API lifecycle and independent evidence only",
+  "decision": "APPROVED_FOR_INACTIVE_SOURCE_INTEGRATION_ONLY",
+  "approval_for_activation": false,
+  "formal_acceptance_pass": false,
+  "source_blockers_in_this_scope": [],
+  "resolved_or_verified_findings": [
+    {
+      "id": "PROFILE-REVIEW-01",
+      "status": "RESOLVED_IN_SCOPED_SOURCE",
+      "severity": "high",
+      "topic": "Late same-name scoped tool substitution",
+      "locations": [
+        "src/ingress.ts:59",
+        "src/ingress.ts:95",
+        "src/ingress.ts:111",
+        "src/ingress.ts:189"
+      ],
+      "initial_evidence": "profile-review-fault-probes.stdout.log",
+      "resolution": "Own definitions are frozen; subsequent global tools/change synchronously cuts off the fragment. Exact live Agent and captured original signal evidence allow cancellation to reach the official Tools caller signal before the substituted body.",
+      "validation": "Latest regression late around wrapper scoped shadow: body count 0.",
+      "limit": "This does not isolate malicious same-process Host code; actual plugin composition remains trusted and unimplemented."
+    },
+    {
+      "id": "PROFILE-REVIEW-02",
+      "status": "RESOLVED_IN_SCOPED_SOURCE",
+      "severity": "high",
+      "topic": "Lookalike Agent accepted by duck typing",
+      "locations": [
+        "src/ingress.ts:67",
+        "src/ingress.ts:102",
+        "src/ingress.ts:109"
+      ],
+      "initial_evidence": "profile-review-fault-probes.stdout.log",
+      "resolution": "Admission requires object identity with public AgentRegistry.get, signal proof tied to that exact object, and lifecycle generation invalidated on agent/disposed. Trusted executeTool mints a fused original signal.",
+      "validation": "Latest regression rejects lookalike/manual unknown signal and same-object re-registration with stale evidence.",
+      "limit": "Tests use the real published AgentRegistry with fixture driver objects, not the real official AgentLoop."
+    },
+    {
+      "id": "PROFILE-REVIEW-03",
+      "status": "RESOLVED_IN_SCOPED_SOURCE",
+      "severity": "high",
+      "topic": "Explicit Host cutoff outside the tool window did not cancel accepted loop signal",
+      "locations": [
+        "src/ingress.ts:86",
+        "src/ingress.ts:94",
+        "src/ingress.ts:112"
+      ],
+      "initial_evidence": "profile-review-lifetime-route-probe.stdout.log",
+      "resolution": "First accepted Agent generation installs a stable Host lifetime listener calling public Agent.cancel, owned by ctx.effect and released on disposal. Registry/object/generation checks avoid cancelling detached or replacement lifecycles. The one-second actor signal remains a separate call-window deadline.",
+      "validation": "Latest regression pre-step then cutoff without any tool: original caller aborted, cancellation count 1.",
+      "limit": "Actual Main logout/project switch/IdP revocation delivery to cutoff remains unimplemented."
+    },
+    {
+      "id": "PROFILE-REVIEW-04",
+      "status": "VERIFIED_IN_SCOPED_SOURCE",
+      "severity": "medium",
+      "topic": "Raw bridge exception detail in model tool errors",
+      "locations": [
+        "src/ingress.ts:194",
+        "src/ingress.ts:204"
+      ],
+      "resolution": "Both fixed tools normalize non-EnterpriseProfileError failures to afos/profile-tool-operation-failed. RPC failures also use fixed messages and empty details.",
+      "validation": "Latest regression verifies bridge exception details do not appear in the Tools result.",
+      "limit": "Trusted EnterpriseProfileError codes must remain stable literal codes; a malicious same-process callback is outside this fragment trust boundary."
+    }
+  ],
+  "remaining_activation_blockers": [
+    {
+      "id": "PROFILE-ACTIVATION-01",
+      "status": "BLOCKED_UNIMPLEMENTED",
+      "topic": "Actual Launcher/Profile inventory and physical routes",
+      "detail": "fixedEnterpriseComposition validates a JSON inventory fragment, not active Cordis/Loader state. The fragment omits complete Agent/Session/LLM/Client/preset assembly. Connection exact Fetch routes have priority over the shared RPC interceptor; WebServer independent HTTP/upgrade owners are not globally intercepted. The trusted launcher must assemble only reviewed packages/routes and bounded physical request limits.",
+      "evidence": [
+        "profile-review-lifetime-route-probe.stdout.log",
+        "public-api-probes.execution.json"
+      ]
+    },
+    {
+      "id": "PROFILE-ACTIVATION-02",
+      "status": "NOT_RUN",
+      "topic": "Real official AgentLoop and current identity/access composition",
+      "detail": "The latest tests exercise published Connection, Tools, Scope and AgentRegistry with fixture identity, business bridge and cancellable registered driver. They do not execute the genuine AgentLoop or the combined real NocoBase identity provider/Access chain. Actual cancellation quiescence, live cutoff and the one-second call deadline require integration evidence."
+    },
+    {
+      "id": "PROFILE-ACTIVATION-03",
+      "status": "BLOCKED_UNIMPLEMENTED",
+      "topic": "Main authority and business IPC binding",
+      "detail": "CurrentSnapshot and EnterpriseProfileBridge remain injected interfaces. Main logout/account/org/project switch must own namespace teardown and explicit cutoff; provider cutoff is not automatically an Ingress cutoff. The bridge must independently validate current run, source pins, grants, project and immutable Session ownership before effects. Real IdP/grant exchange and deployed authority are not validated."
+    },
+    {
+      "id": "PROFILE-ACTIVATION-04",
+      "status": "NOT_RUN",
+      "topic": "Actual desktop Client, packing, native OS and signing",
+      "detail": "No actual enterprise Client/Slot/GUI flow, packaged Loader boot, Windows/macOS process behavior, signing or native containment is established. Native execution is declared unavailable. No fixture or Linux result is a desktop AT PASS."
+    }
+  ],
+  "checks": [
+    {
+      "command": [
+        "node",
+        "--test",
+        "tests/profile.test.mjs"
+      ],
+      "cwd": "/workspace/afos-profile/workdsh-web/packages/providers/enterprise-profile",
+      "started_at": "2026-10-02T19:47:01.863994+00:00",
+      "ended_at": "2026-10-02T19:47:02.339708+00:00",
+      "exit_code": 0,
+      "stdout_file": "profile-review-final-tests.stdout.log",
+      "stderr_file": "profile-review-final-tests.stderr.log",
+      "stdout_sha256": "06b273b3b48acbd329ec12fb598e7dce9bc2a12c1b47b7599fe84423f7063743",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "formal_acceptance_pass": false
+    },
+    {
+      "command": [
+        "./node_modules/.bin/tsc",
+        "-p",
+        "packages/providers/enterprise-profile/tsconfig.json",
+        "--noEmit"
+      ],
+      "cwd": "/workspace/afos-profile/workdsh-web",
+      "started_at": "2026-10-02T19:47:01.867620+00:00",
+      "ended_at": "2026-10-02T19:47:02.878017+00:00",
+      "exit_code": 0,
+      "stdout_file": "profile-review-final-typecheck.stdout.log",
+      "stderr_file": "profile-review-final-typecheck.stderr.log",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "formal_acceptance_pass": false
+    }
+  ],
+  "latest_unit_results": {
+    "tests": 20,
+    "pass": 20,
+    "fail": 0,
+    "exit_code": 0,
+    "fixtures_not_real_acceptance": true
+  },
+  "frozen_files": [
+    {
+      "path": "packages/providers/enterprise-profile/src/index.ts",
+      "sha256": "6d6e0a54c9962dc3fe835dfe48a0f8fdfb10537e54f8675d022e39d0e9220b03",
+      "bytes": 148
+    },
+    {
+      "path": "packages/providers/enterprise-profile/src/ingress.ts",
+      "sha256": "e09ae35a5539a433f1c21dff434678b62f501593da2e6a45d381b060b414afd6",
+      "bytes": 17108
+    },
+    {
+      "path": "packages/providers/enterprise-profile/src/profile-policy.ts",
+      "sha256": "5a3ae768a5f89c284e957282d2bf823fc08144f82317cfc41641bdf59aef94d9",
+      "bytes": 3478
+    },
+    {
+      "path": "packages/providers/enterprise-profile/src/snapshot-authority.ts",
+      "sha256": "956bc2eea4dafdd4efda7d93f2db8619e033aa9d2cb4718345cb7254d832b5d5",
+      "bytes": 6307
+    },
+    {
+      "path": "packages/providers/enterprise-profile/tests/profile.test.mjs",
+      "sha256": "25ed5f6e6504f9b5db3371630597efa87d22dbf619b06c19baf24ea5362e39cc",
+      "bytes": 20027
+    },
+    {
+      "path": "packages/providers/enterprise-profile/package.json",
+      "sha256": "31199505e91f425a659c54728f7167727a746d474f58f4465b8e15be2251bb84",
+      "bytes": 1045
+    },
+    {
+      "path": "packages/providers/enterprise-profile/tsconfig.json",
+      "sha256": "9aa5d59e92e1db869f97f24762c6da740677fd0affc337173fbec57030083b63",
+      "bytes": 269
+    },
+    {
+      "path": "pnpm-lock.yaml",
+      "sha256": "27608a96ec08693c0b27495e9275cf2fcdcf6e1010b9a403578452db14f9a670",
+      "bytes": 939212
+    },
+    {
+      "path": "packages/contracts/src/enterprise-identity.ts",
+      "sha256": "9269d4f338124eea7a06fd14b8138787170913d1dfbade554cb0059bfb76f71c",
+      "bytes": 1755
+    },
+    {
+      "path": "packages/providers/identity-nocobase/src/authority.ts",
+      "sha256": "f83617e91aa1cf066d26ca408b953144ba94ab36d140a49b3b1a881d766ed88b",
+      "bytes": 10732
+    },
+    {
+      "path": "packages/providers/enterprise-profile/dist/index.js",
+      "sha256": "6d6e0a54c9962dc3fe835dfe48a0f8fdfb10537e54f8675d022e39d0e9220b03",
+      "bytes": 148
+    },
+    {
+      "path": "packages/providers/enterprise-profile/dist/ingress.js",
+      "sha256": "37ee36b5661ca1d0fcb2c3f9adacc33aca8ee3ef3c7aa914697f42a1224f3a09",
+      "bytes": 16270
+    },
+    {
+      "path": "packages/providers/enterprise-profile/dist/profile-policy.js",
+      "sha256": "79f5b5c7bb6da87f3ee4c3add7f454f46830840d143a2e8280fc83be4c1c771b",
+      "bytes": 3036
+    },
+    {
+      "path": "packages/providers/enterprise-profile/dist/snapshot-authority.js",
+      "sha256": "66d7e54177a52d5b302a44a65a20c93e8b9ed2eb6f21755be07623b58650b2c7",
+      "bytes": 5905
+    }
+  ],
+  "freeze_verification": {
+    "checked_at": "2026-10-02T19:50:16.248966+00:00",
+    "changed_files": [],
+    "unchanged_count": 14,
+    "exit_code": 0
+  },
+  "historical_evidence": {
+    "profile-review-tests.execution.json": "13 pass / 2 fail while the owner added new tests before rebuilding dist; retained as original output, not a failure of final frozen source.",
+    "profile-review-fault-probes.execution.json": "Earlier source confirmed late substitution and lookalike admission; not a current passing probe.",
+    "profile-review-lifetime-route-probe.execution.json": "Earlier source confirmed lifetime gap, now covered by regression; exact Fetch precedence remains an activation composition boundary."
+  },
+  "rollback": "Remove only this optional inactive module/configuration and its evidence changes; preserve user Sessions, namespace records, credentials, outbox and drafts. No runtime, database or external change was made by this review."
+}

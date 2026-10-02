@@ -1,0 +1,16 @@
+{
+  "command": [
+    "node",
+    "--test",
+    "tests/profile.test.mjs"
+  ],
+  "cwd": "/workspace/afos-profile/workdsh-web/packages/providers/enterprise-profile",
+  "started_at": "2026-10-02T19:33:53.173079+00:00",
+  "ended_at": "2026-10-02T19:33:53.648160+00:00",
+  "exit_code": 1,
+  "stdout_file": "profile-review-tests.stdout.log",
+  "stderr_file": "profile-review-tests.stderr.log",
+  "stdout_sha256": "bc6e0cecca68f40a76f3c1dd63e72e393f98e0c69922d0a25fc72374c07b8dcd",
+  "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "formal_acceptance_pass": false
+}

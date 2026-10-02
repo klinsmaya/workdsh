@@ -1,0 +1,23 @@
+{
+  "scope": "targeted final delta only, not formal AT",
+  "count": 3,
+  "allPassed": true,
+  "results": [
+    {
+      "name": "cancellation after first guard but before thunk microtask starts no operation",
+      "passed": true,
+      "started": 0
+    },
+    {
+      "name": "live thunk resolves and starts exactly once",
+      "passed": true,
+      "successfulStarts": 1,
+      "value": 7
+    },
+    {
+      "name": "preaborted already started promise late rejection remains consumed",
+      "passed": true,
+      "unhandled": []
+    }
+  ]
+}

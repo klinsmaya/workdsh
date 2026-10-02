@@ -1,0 +1,2 @@
+{"probe":"owned id plus lookalike cancel method accepted without Agent registry","reads":1,"isError":false,"result":"CONFIRMED","scope":"Fixture proves the current duck-type check; not a real official Agent test."}
+{"probe":"same-name scope shadow installed after final pre-dispatch guard","unapprovedEffects":1,"approvedReads":0,"isError":false,"result":"BYPASS_CONFIRMED","scope":"Requires trusted same-process code to register a late scope tool; fixed loader enforcement is not implemented in this fragment."}

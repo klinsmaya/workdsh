@@ -1,0 +1,15 @@
+{
+  "command": [
+    "node",
+    "packages/providers/enterprise-profile/evidence/profile-review-fault-probes.mjs"
+  ],
+  "cwd": "/workspace/afos-profile/workdsh-web",
+  "started_at": "2026-10-02T19:33:53.171539+00:00",
+  "ended_at": "2026-10-02T19:33:53.400970+00:00",
+  "exit_code": 0,
+  "stdout_file": "profile-review-fault-probes.stdout.log",
+  "stderr_file": "profile-review-fault-probes.stderr.log",
+  "stdout_sha256": "a8506ea959d58058e4e3f0d7cde7862688f78162f62c6f9746ccf020e54d86a6",
+  "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "formal_acceptance_pass": false
+}

@@ -1,0 +1,2 @@
+{"probe":"public Gateway invoke, stream, wireStream bypass HTTP connection/request listener","effects":3,"middlewareCalls":0,"result":"CONFIRMED","scope":"read-only published API fixture, not enterprise application acceptance"}
+{"probe":"lookup and Host context policy unique owner","result":"PASS"}

@@ -112,6 +112,9 @@ export class DesktopAuth {
   private loginFlight: Promise<void> | undefined
   private loginAbort: AbortController | undefined
   private expiresAt = 0
+  private persistedRefresh: { namespace: string; token: string } | undefined
+  private restoreFlight: { namespace: string; operation: Promise<boolean>; abort: AbortController } | undefined
+  private credentialWriteTail: Promise<unknown> = Promise.resolve()
   constructor(
     private readonly config: EnterpriseAuthConfig,
     private readonly openBrowser: (url: string) => Promise<void>,
@@ -138,6 +141,7 @@ export class DesktopAuth {
     return body as unknown as Metadata
   }
   login(signal?: AbortSignal): Promise<void> {
+    if (this.restoreFlight) return Promise.reject(new Error('auth/session-already-active'))
     if (this.loginFlight) return this.loginFlight
     const generation = this.generation
     const controller = new AbortController()
@@ -227,7 +231,51 @@ export class DesktopAuth {
     }
     return this.refreshFlight
   }
+  /** Main only; persist only after the Broker has confirmed this exact account namespace. */
+  persistRefresh(vault: RefreshTokenVault, namespace: string): Promise<boolean> {
+    const generation = this.generation
+    const operation = this.credentialWriteTail.then(async () => {
+      if (generation !== this.generation) throw new Error('auth/account-changed')
+      // Read the latest rotated token at publication time, not when the write was queued.
+      const token = this.tokens?.refresh_token
+      if (!token) return false
+      if (this.persistedRefresh?.namespace === namespace && this.persistedRefresh.token === token) return true
+      const saved = await vault.save(namespace, token)
+      if (generation !== this.generation) throw new Error('auth/account-changed')
+      if (saved) this.persistedRefresh = { namespace, token }
+      return saved
+    })
+    this.credentialWriteTail = operation.catch(() => undefined)
+    return operation
+  }
+  /** Main logout waits for old publication before deleting its namespace files. */
+  async settleCredentialWrites(): Promise<void> { await this.credentialWriteTail }
+  /** Restore encrypted refresh state only; the caller must verify the account before Host start. */
+  restoreRefresh(vault: RefreshTokenVault, namespace: string, signal?: AbortSignal): Promise<boolean> {
+    if (this.restoreFlight) return this.restoreFlight.namespace === namespace ? this.restoreFlight.operation : Promise.reject(new Error('auth/session-already-active'))
+    if (this.signedIn || this.loginFlight || this.refreshFlight) return Promise.reject(new Error('auth/session-already-active'))
+    const generation = this.generation
+    const abort = new AbortController()
+    const combined = AbortSignal.any([abort.signal, ...(signal ? [signal] : [])])
+    const operation = (async () => {
+      await this.settleCredentialWrites()
+      const refresh = await vault.load(namespace)
+      combined.throwIfAborted()
+      if (generation !== this.generation) throw new Error('auth/account-changed')
+      if (!refresh) return false
+      const metadata = await this.metadata(combined)
+      const body = await this.request(metadata.token_endpoint, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ grant_type: 'refresh_token', client_id: this.config.clientId, refresh_token: refresh, resource: this.config.resource }) }, combined)
+      combined.throwIfAborted()
+      this.install(body, generation)
+      return true
+    })().finally(() => { if (this.restoreFlight?.operation === operation) this.restoreFlight = undefined })
+    this.restoreFlight = { namespace, operation, abort }
+    return operation
+  }
   logout(): void {
+    this.restoreFlight?.abort.abort()
+    this.restoreFlight = undefined
     this.loginAbort?.abort()
     this.loginAbort = undefined
     this.loginFlight = undefined
@@ -235,6 +283,7 @@ export class DesktopAuth {
     this.tokens = undefined
     this.expiresAt = 0
     this.refreshFlight = undefined
+    this.persistedRefresh = undefined
   }
 }
 
