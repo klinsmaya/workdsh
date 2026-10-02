@@ -37,7 +37,7 @@
     "test": "node --test tests/*.test.mjs"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "4.0.3",
+    "@deepseek-ai/cordis": "4.0.4",
     "@deepseek-ai/dsh-agent": "0.1.7-rc.2",
     "@deepseek-ai/dsh-client-connection": "0.1.7-rc.2",
     "@deepseek-ai/dsh-tools": "0.1.7-rc.2",
@@ -60,7 +60,7 @@
     "@deepseek-ai/dsh-scope": "0.1.7-rc.2"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "4.0.3",
+    "@deepseek-ai/cordis": "4.0.4",
     "@deepseek-ai/dsh-agent": "0.1.7-rc.2",
     "@deepseek-ai/dsh-client-connection": "0.1.7-rc.2",
     "@deepseek-ai/dsh-tools": "0.1.7-rc.2",

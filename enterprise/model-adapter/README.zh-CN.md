@@ -16,6 +16,6 @@ Host 使用公开的 `ctx.llm.registerAdapter()` 注册 `EnterpriseModelAdapter`
 
 这里的 P1 只支持有限文本和非延迟工具。图片、文件引用、developer 工具历史扩展、自定义内容块和调用者推理级别覆盖会以 `UNSUPPORTED_MODEL_CONTENT` 拒绝，不转换为任意本机路径或备用端点。图片/文件验收保持 `NOT_RUN`。D10 正式 AT-34、AT-45、AT-46、AT-47 均保持 `NOT_RUN`，直至挂载的 Profile、真实 NocoBase 当前权限、持久账本、获准网关凭据与完整资料到草稿闭环完成测试。离线测试不能关闭正式用例。
 
-在本目录运行 `COREPACK_HOME=/workspace/afos-handoff/corepack corepack pnpm install --frozen-lockfile`、`corepack pnpm run typecheck` 和 `corepack pnpm test`。本包锁定 DSH `0.1.7-rc.2` 与当前 WorkDSH Cordis `4.0.3`。发布的 DSH peer 要求 Cordis `~4.0.4`；已在当前 `4.0.3` 锁上测试公开 LLM 注册组合，但不声称跨运行时互通或已升级依赖。来源、命令证据、审查范围与回滚见 `REUSE.md` 和 `evidence/delivery.json`。
+在本目录运行 `COREPACK_HOME=/workspace/afos-handoff/corepack corepack pnpm install --frozen-lockfile`、`corepack pnpm run typecheck` 和 `corepack pnpm test`。本包锁定 DSH `0.1.7-rc.2` 与消费方 Cordis `4.0.4`，符合发布 DSH 的 `~4.0.4` peer。已在此依赖图运行真实公开 LLM 注册组合及22项 Model 检查；完整目标系统安装包互通仍为 NOT_RUN。来源、命令证据、审查范围与回滚见 `REUSE.md` 和 `evidence/delivery.json`。
 
 激活前回滚独立源码时，只通过经审查的本地补丁/revert 移除这个模块。网关挂载后，先禁用明确模型动作；恢复代码时保留未知预留和供应商用量记录。代码回滚不删除凭据、Session 文件、成果或 NocoBase 数据。本任务没有推送源码、部署服务器、调用外部模型、迁移生产数据库或扩大权限。

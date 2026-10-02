@@ -53,8 +53,8 @@ workspace 前置，再运行十五项真实官方运行时集成检查。身份�
 为夹具；覆盖真实工具 turn、持久草稿/哈希确认、已认证 HTTP 和物理 WS 拒绝、
 取消、当前 Run policy、模型 dispatch 时撤权、失败占用释放、重复启动及转义内容
 边界，以及离线编辑/磁盘重读、界面刷新前的 Main 准入锁、异常响应/body IO
-迟到原版 render/stream 的取消已知 refresh token 拒绝及并发拒绝/断网取消。夹具/Linux 证据不算目标桌面验收。DSH 保持锁定；官方 Cordis ~4.0.4 peer
-与消费方 4.0.3 override 的偏离仍须安装包兼容验证。
+迟到原版 render/stream 的取消、已知 refresh token 拒绝及并发拒绝/断网取消。夹具/Linux 证据不算目标桌面验收。DSH 保持锁定；消费方 Cordis4.0.4 已符合发布包 ~4.0.4 peer 并在原版 Core
+及现有消费模块验证。Linux 源码证据不替代目标 Windows/macOS 安装包兼容验证。
 
 支持任务 D01/D04/D05/D07/D08/D09/D10。正式 AT-03/07/08/10/11/13–18/20/22–23/
 31/33–47 不因这些检查提升。原生沙箱、Windows/macOS、真实 IdP/NocoBase/SQL/模型、

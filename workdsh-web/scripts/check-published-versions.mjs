@@ -11,5 +11,5 @@ for (const [, name, version] of entries) {
 }
 const cordis = [...lock.matchAll(/^  '?@deepseek-ai\/cordis@([^\s:'(]+)(?:[^\n]*):$/gm)];
 assert.ok(cordis.length > 0);
-assert.deepEqual([...new Set(cordis.map(m => m[1]))], ['4.0.3']);
-console.log(`PASS: ${entries.length} DSH lock entries pinned to ${expected}; Cordis 4.0.3 only`);
+assert.deepEqual([...new Set(cordis.map(m => m[1]))], ['4.0.4']);
+console.log(`PASS: ${entries.length} DSH lock entries pinned to ${expected}; Cordis 4.0.4 only`);

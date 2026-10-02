@@ -75,8 +75,9 @@ current Run policy, revocation at model dispatch, failed admission, repeated boo
 escaped-content size, offline editing/reopening, sticky Main admission before
 Runtime refresh, malformed responses/body IO, and late original render/stream
 cutoff and known refresh-token denial and concurrent denial/offline abort. Fixture/Linux evidence is not target desktop acceptance.
-DSH is pinned; official Cordis peers ~4.0.4 still differ from WorkDSH's 4.0.3
-consumer override and need packaged compatibility validation.
+DSH remains pinned. Consumer Cordis4.0.4 now satisfies the published ~4.0.4
+peers and is verified with original Core and existing consumers. This Linux
+source evidence does not replace packaged Windows/macOS compatibility.
 
 Supporting tasks: D01/D04/D05/D07/D08/D09/D10. Formal AT-03/07/08/10/11/13–18/20/
 22–23/31/33–47 are not promoted by these headless checks. Native sandbox,

@@ -15,9 +15,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test tests/*.test.mjs"
   },
-  "peerDependencies": { "@deepseek-ai/cordis": "4.0.3" },
+  "peerDependencies": { "@deepseek-ai/cordis": "4.0.4" },
   "devDependencies": {
-    "@deepseek-ai/cordis": "4.0.3",
+    "@deepseek-ai/cordis": "4.0.4",
     "@types/node": "22.19.0",
     "workdsh-contracts": "workspace:*"
   }
