@@ -10,6 +10,10 @@ export interface EnterpriseAuthConfig {
   readonly resource: string
   readonly scope: string
 }
+/** Stable trusted classification; never derives a code from an IdP message. */
+export class DesktopAuthError extends Error {
+  constructor(readonly code: string) { super(code) }
+}
 interface Metadata { issuer: string; authorization_endpoint: string; token_endpoint: string; code_challenge_methods_supported: string[] }
 interface Tokens { access_token: string; refresh_token?: string; token_type: string; expires_in: number; scope: string }
 export interface TokenEncryption {
@@ -29,14 +33,14 @@ export function osTokenEncryption(storage: OsSafeStorage, platform: NodeJS.Platf
     && (platform !== 'linux' || Boolean(storage.getSelectedStorageBackend?.() && storage.getSelectedStorageBackend() !== 'basic_text'))
   return {
     available,
-    encrypt: text => { if (!available()) throw new Error('auth/encryption-unavailable'); return storage.encryptString(text) },
-    decrypt: bytes => { if (!available()) throw new Error('auth/encryption-unavailable'); return storage.decryptString(bytes) },
+    encrypt: text => { if (!available()) throw new DesktopAuthError('auth/encryption-unavailable'); return storage.encryptString(text) },
+    decrypt: bytes => { if (!available()) throw new DesktopAuthError('auth/encryption-unavailable'); return storage.decryptString(bytes) },
   }
 }
 
 function endpoint(value: string): URL {
   const url = new URL(value)
-  if (url.protocol !== 'https:' || url.username || url.password || url.hash || url.search) throw new Error('auth/invalid-managed-endpoint')
+  if (url.protocol !== 'https:' || url.username || url.password || url.hash || url.search) throw new DesktopAuthError('auth/invalid-managed-endpoint')
   return url
 }
 function scopes(value: string): string[] { return value.split(/\s+/u).filter(Boolean) }
@@ -48,9 +52,9 @@ export class RefreshTokenVault {
   private path(namespace: string): string { return join(this.directory, `${createHash('sha256').update(namespace).digest('hex')}.enc`) }
   async save(namespace: string, token: string): Promise<boolean> {
     if (!this.encryption.available()) return false
-    if (!secret(token)) throw new Error('auth/invalid-token')
+    if (!secret(token)) throw new DesktopAuthError('auth/invalid-token')
     await mkdir(this.directory, { recursive: true, mode: 0o700 })
-    if ((await lstat(this.directory)).isSymbolicLink()) throw new Error('auth/invalid-vault-directory')
+    if ((await lstat(this.directory)).isSymbolicLink()) throw new DesktopAuthError('auth/invalid-vault-directory')
     await chmod(this.directory, 0o700)
     const destination = this.path(namespace)
     const temporary = `${destination}.${randomBytes(12).toString('hex')}.tmp`
@@ -68,22 +72,22 @@ export class RefreshTokenVault {
       try {
         const stat = await file.stat()
         if (!stat.isFile() || stat.nlink !== 1 || stat.size > 65_536
-          || process.platform !== 'win32' && (stat.mode & 0o077) !== 0) throw new Error('auth/invalid-vault-file')
+          || process.platform !== 'win32' && (stat.mode & 0o077) !== 0) throw new DesktopAuthError('auth/invalid-vault-file')
         bytes = await file.readFile()
       } finally { await file.close() }
       const token = this.encryption.decrypt(bytes)
-      if (!secret(token)) throw new Error('auth/invalid-stored-token')
+      if (!secret(token)) throw new DesktopAuthError('auth/invalid-stored-token')
       return token
     } catch (error) {
       if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return undefined
-      throw new Error('auth/vault-read-failed')
+      throw new DesktopAuthError('auth/vault-read-failed')
     }
   }
   async clear(namespace: string): Promise<void> { await rm(this.path(namespace), { force: true }) }
 }
 
 async function readJson(response: Response): Promise<unknown> {
-  if (!response.body) throw new Error('auth/empty-response')
+  if (!response.body) throw new DesktopAuthError('auth/empty-response')
   const reader = response.body.getReader()
   const chunks: Uint8Array[] = []
   let bytes = 0
@@ -92,15 +96,16 @@ async function readJson(response: Response): Promise<unknown> {
       const chunk = await reader.read()
       if (chunk.done) break
       bytes += chunk.value.byteLength
-      if (bytes > 65_536) throw new Error('auth/response-too-large')
+      if (bytes > 65_536) throw new DesktopAuthError('auth/response-too-large')
       chunks.push(chunk.value)
     }
-    return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown
+    try { return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks))) as unknown }
+    catch { throw new DesktopAuthError('auth/invalid-response') }
   } finally { await reader.cancel().catch(() => undefined) }
 }
 
 function record(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('auth/invalid-response')
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new DesktopAuthError('auth/invalid-response')
   return value as Record<string, unknown>
 }
 
@@ -122,26 +127,29 @@ export class DesktopAuth {
   ) {
     endpoint(config.issuer)
     endpoint(config.resource)
-    if (!config.clientId || !scopes(config.scope).includes('afos')) throw new Error('auth/invalid-client-config')
+    if (!config.clientId || !scopes(config.scope).includes('afos')) throw new DesktopAuthError('auth/invalid-client-config')
   }
   get signedIn(): boolean { return this.tokens !== undefined }
   private async request(url: string, init: RequestInit, signal?: AbortSignal): Promise<Record<string, unknown>> {
     const response = await this.fetcher(url, { ...init, redirect: 'error', signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000) })
-    const body = record(await readJson(response))
-    if (!response.ok) throw new Error(body.error === 'invalid_grant' ? 'auth/invalid-grant' : 'auth/request-failed')
+    const knownDenial = response.status >= 400 && response.status < 500
+    let body: Record<string, unknown>
+    try { body = record(await readJson(response)) }
+    catch (error) { if (knownDenial) throw new DesktopAuthError('auth/request-denied'); throw error }
+    if (!response.ok) throw new DesktopAuthError(body.error === 'invalid_grant' ? 'auth/invalid-grant' : knownDenial ? 'auth/request-denied' : 'auth/request-failed')
     return body
   }
   private async metadata(signal?: AbortSignal): Promise<Metadata> {
     const issuer = this.config.issuer.replace(/\/$/u, '')
     const body = await this.request(`${issuer}/.well-known/openid-configuration`, {}, signal)
     if (body.issuer !== this.config.issuer || typeof body.authorization_endpoint !== 'string' || typeof body.token_endpoint !== 'string'
-      || !Array.isArray(body.code_challenge_methods_supported) || !body.code_challenge_methods_supported.includes('S256')) throw new Error('auth/invalid-metadata')
+      || !Array.isArray(body.code_challenge_methods_supported) || !body.code_challenge_methods_supported.includes('S256')) throw new DesktopAuthError('auth/invalid-metadata')
     const origin = endpoint(issuer).origin
-    if (endpoint(body.authorization_endpoint).origin !== origin || endpoint(body.token_endpoint).origin !== origin) throw new Error('auth/unapproved-endpoint')
+    if (endpoint(body.authorization_endpoint).origin !== origin || endpoint(body.token_endpoint).origin !== origin) throw new DesktopAuthError('auth/unapproved-endpoint')
     return body as unknown as Metadata
   }
   login(signal?: AbortSignal): Promise<void> {
-    if (this.restoreFlight) return Promise.reject(new Error('auth/session-already-active'))
+    if (this.restoreFlight) return Promise.reject(new DesktopAuthError('auth/session-already-active'))
     if (this.loginFlight) return this.loginFlight
     const generation = this.generation
     const controller = new AbortController()
@@ -181,13 +189,13 @@ export class DesktopAuth {
       response.end(valid ? 'Sign-in received. Return to WorkDSH.' : 'Invalid sign-in callback.')
       if (valid) { consumed = true; settle(url.searchParams.get('code') ?? '') }
     })
-    const abort = () => reject(new Error('auth/login-cancelled'))
+    const abort = () => reject(new DesktopAuthError('auth/login-cancelled'))
     deadline.addEventListener('abort', abort, { once: true })
     try {
       deadline.throwIfAborted()
       await new Promise<void>((resolve, fail) => { server.once('error', fail); server.listen(0, '127.0.0.1', resolve) })
       const address = server.address()
-      if (!address || typeof address === 'string') throw new Error('auth/callback-unavailable')
+      if (!address || typeof address === 'string') throw new DesktopAuthError('auth/callback-unavailable')
       const redirectUri = `http://127.0.0.1:${address.port}${callbackPath}`
       const authorization = new URL(metadata.authorization_endpoint)
       authorization.search = new URLSearchParams({ response_type: 'code', client_id: this.config.clientId, redirect_uri: redirectUri, scope: this.config.scope, resource: this.config.resource, state, code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256' }).toString()
@@ -202,11 +210,11 @@ export class DesktopAuth {
     }
   }
   private install(body: Record<string, unknown>, generation: number): string {
-    if (generation !== this.generation) throw new Error('auth/account-changed')
+    if (generation !== this.generation) throw new DesktopAuthError('auth/account-changed')
     if (!secret(body.access_token) || body.token_type !== 'Bearer' || typeof body.expires_in !== 'number'
       || !Number.isFinite(body.expires_in) || body.expires_in <= 0 || body.expires_in > 86_400
       || typeof body.scope !== 'string' || !scopes(this.config.scope).filter(s => s !== 'offline_access').every(s => scopes(body.scope as string).includes(s))
-      || body.refresh_token !== undefined && !secret(body.refresh_token)) throw new Error('auth/invalid-token-response')
+      || body.refresh_token !== undefined && !secret(body.refresh_token)) throw new DesktopAuthError('auth/invalid-token-response')
     this.tokens = body as unknown as Tokens
     this.expiresAt = Date.now() + body.expires_in * 1_000
     return body.access_token
@@ -214,9 +222,9 @@ export class DesktopAuth {
   /** Trusted Broker caller only; must never be registered as renderer/Agent API. */
   async accessToken(signal?: AbortSignal): Promise<string> {
     signal?.throwIfAborted()
-    if (!this.tokens) throw new Error('auth/sign-in-required')
+    if (!this.tokens) throw new DesktopAuthError('auth/sign-in-required')
     if (this.expiresAt > Date.now() + 30_000) return this.tokens.access_token
-    if (!this.tokens.refresh_token) { this.logout(); throw new Error('auth/sign-in-required') }
+    if (!this.tokens.refresh_token) { this.logout(); throw new DesktopAuthError('auth/sign-in-required') }
     if (!this.refreshFlight) {
       const generation = this.generation
       const refresh = this.tokens.refresh_token
@@ -235,13 +243,13 @@ export class DesktopAuth {
   persistRefresh(vault: RefreshTokenVault, namespace: string): Promise<boolean> {
     const generation = this.generation
     const operation = this.credentialWriteTail.then(async () => {
-      if (generation !== this.generation) throw new Error('auth/account-changed')
+      if (generation !== this.generation) throw new DesktopAuthError('auth/account-changed')
       // Read the latest rotated token at publication time, not when the write was queued.
       const token = this.tokens?.refresh_token
       if (!token) return false
       if (this.persistedRefresh?.namespace === namespace && this.persistedRefresh.token === token) return true
       const saved = await vault.save(namespace, token)
-      if (generation !== this.generation) throw new Error('auth/account-changed')
+      if (generation !== this.generation) throw new DesktopAuthError('auth/account-changed')
       if (saved) this.persistedRefresh = { namespace, token }
       return saved
     })
@@ -252,8 +260,8 @@ export class DesktopAuth {
   async settleCredentialWrites(): Promise<void> { await this.credentialWriteTail }
   /** Restore encrypted refresh state only; the caller must verify the account before Host start. */
   restoreRefresh(vault: RefreshTokenVault, namespace: string, signal?: AbortSignal): Promise<boolean> {
-    if (this.restoreFlight) return this.restoreFlight.namespace === namespace ? this.restoreFlight.operation : Promise.reject(new Error('auth/session-already-active'))
-    if (this.signedIn || this.loginFlight || this.refreshFlight) return Promise.reject(new Error('auth/session-already-active'))
+    if (this.restoreFlight) return this.restoreFlight.namespace === namespace ? this.restoreFlight.operation : Promise.reject(new DesktopAuthError('auth/session-already-active'))
+    if (this.signedIn || this.loginFlight || this.refreshFlight) return Promise.reject(new DesktopAuthError('auth/session-already-active'))
     const generation = this.generation
     const abort = new AbortController()
     const combined = AbortSignal.any([abort.signal, ...(signal ? [signal] : [])])
@@ -261,7 +269,7 @@ export class DesktopAuth {
       await this.settleCredentialWrites()
       const refresh = await vault.load(namespace)
       combined.throwIfAborted()
-      if (generation !== this.generation) throw new Error('auth/account-changed')
+      if (generation !== this.generation) throw new DesktopAuthError('auth/account-changed')
       if (!refresh) return false
       const metadata = await this.metadata(combined)
       const body = await this.request(metadata.token_endpoint, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -288,6 +296,6 @@ export class DesktopAuth {
 }
 
 export function accountNamespace(issuer: string, sub: string, organizationId: string, deviceId: string): string {
-  if (![issuer, sub, organizationId, deviceId].every(secret)) throw new Error('auth/invalid-namespace')
+  if (![issuer, sub, organizationId, deviceId].every(secret)) throw new DesktopAuthError('auth/invalid-namespace')
   return createHash('sha256').update(JSON.stringify([issuer, sub, organizationId, deviceId])).digest('hex')
 }

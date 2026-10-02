@@ -17,7 +17,7 @@ export async function fixture(options={}) {
   const project={id:'p1',organizationId:'org1',name:'Allowed'};
   const material={id:'m1',projectId:'p1',revisionId:'v1',name:'Source',text:'Server source',hash:digest('Server source')};
   const tables={runs:new Map(),uploads:new Map(),receipts:new Map(),artifacts:new Map(),commitRequests:new Map()};
-  let active=true,challenge='',stops=0,starts=0,refresh=0,capability={ingressValidated:false,sandbox:'unavailable'};
+  let active=true,connected=true,challenge='',stops=0,starts=0,refresh=0,capability={ingressValidated:false,sandbox:'unavailable'};
   let startHook=async()=>{},business;const calls=[];
   const store={tokenActive:async()=>active,deviceId:async()=>'device1',
     projects:async()=>({items:[project],nextPosition:null}),project:async(_,id)=>id===project.id?project:undefined,
@@ -26,8 +26,10 @@ export async function fixture(options={}) {
     transaction:async fn=>fn(store),audit:async()=>{},};
   const bridge=new AgentBridge(store,config.releaseId,config.policyRevision,randomBytes(32),Boolean(options.model));
   const fetcher=async(url,init)=>{
+    if(!connected)throw new TypeError('fixture disconnected');
     if(String(url).endsWith('openid-configuration'))return Response.json({issuer,authorization_endpoint:`${issuer}/authorize`,token_endpoint:`${issuer}/token`,code_challenge_methods_supported:['S256']});
     if(String(url)===`${issuer}/token`){
+      const override=await options.tokenResponse?.(init);if(override)return override;
       const params=new URLSearchParams(String(init.body));
       assert.equal(params.has('client_secret'),false);
       if(params.get('grant_type')==='authorization_code')assert.equal(createHash('sha256').update(params.get('code_verifier')).digest('base64url'),challenge);
@@ -41,6 +43,7 @@ export async function fixture(options={}) {
       const body=new ReadableStream({async start(controller){try{for await(const chunk of chunks){init.signal.throwIfAborted();controller.enqueue(new TextEncoder().encode(encodeModelSse(chunk)));}controller.close();}catch(error){controller.error(error);}}});
       return new Response(body,{headers:{'content-type':'text/event-stream'}});
     }
+    const override=await options.response?.(request,init.signal);if(override)return override;
     try{return Response.json(await bridge.dispatch(evidence,request.action,request.params));}
     catch(error){return Response.json({code:error.code??'afos/internal-error'},{status:error.status??503});}
   };
@@ -51,5 +54,5 @@ export async function fixture(options={}) {
   const ready=async()=>{await main.signIn();return main.selectProject(project.id);};
   const ref={materialId:material.id,revisionId:material.revisionId,sha256:material.hash};
   const bind=async(runId,sessionId)=>{if(!business){capability={ingressValidated:true,sandbox:'full'};await main.startHost();}const lease=await business.prepareSessionBinding(runId,sessionId,new AbortController().signal);lease.commit();return lease;};
-  return {main,base,config,tables,calls,ref,ready,host,vault,bind,business:()=>business,principal:value=>{evidence.principalId=value;},stops:()=>stops,starts:()=>starts,revoke:()=>{active=false;},capability:value=>{capability=value;},startHook:value=>{startHook=value;},cleanup:async()=>{await main.logout();await rm(base,{recursive:true,force:true});}};
+  return {main,base,config,tables,calls,ref,ready,host,vault,bind,business:()=>business,principal:value=>{evidence.principalId=value;},stops:()=>stops,starts:()=>starts,revoke:()=>{active=false;},disconnect:()=>{connected=false;},reconnect:()=>{connected=true;},capability:value=>{capability=value;},startHook:value=>{startHook=value;},cleanup:async()=>{await main.logout();await rm(base,{recursive:true,force:true});}};
 }

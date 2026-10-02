@@ -21,6 +21,7 @@ export interface OfficialTurnEvent {
 /** Injected privately at trusted assembly. Never serialized or exposed as one Remote. */
 export interface MainBusinessCapabilities {
   currentAuthority(signal: AbortSignal): Promise<GatewayAuthoritySnapshot>;
+  localState(): { readonly project: { readonly id: string; readonly name: string }; readonly authority: 'current' | 'offline'; readonly lastSyncAt: string };
   authorize(refs: readonly EnterpriseSourceRef[], operationId: string, signal: AbortSignal): Promise<OwnedEnterpriseRun>;
   releaseRunAdmission(runId: string): void;
   prepareSessionBinding(runId: string, sessionId: string, signal: AbortSignal): Promise<{ commit(): void; dispose(): void }>;

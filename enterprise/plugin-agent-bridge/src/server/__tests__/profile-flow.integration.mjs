@@ -18,7 +18,7 @@ const done=[{type:'block-start',index:0,blockType:'text'},{type:'text-delta',ind
   {type:'block-end',index:0,block:{type:'text',text:'The local draft awaits human review.'}},{type:'finish',reason:{kind:'stop'}}];
 async function composed(options={}){
   let ctx,profileRoot,modelCalls=0;const requests=[];
-  const f=await fixture({stopHost:async()=>{if(ctx){const old=ctx;ctx=undefined;await old.fiber.dispose();}},
+  const f=await fixture({response:options.response,tokenResponse:options.tokenResponse,shortTokens:options.shortTokens,stopHost:async()=>{if(ctx){const old=ctx;ctx=undefined;await old.fiber.dispose();}},
     model:async(request,signal)=>{requests.push(request);signal.throwIfAborted();modelCalls++;
       if(options.model)return options.model(request,signal);
       const run=f.tables.runs.get(request.run.runId),refs=run.inputs.map(({materialId,revisionId,hash})=>({materialId,revisionId,sha256:hash})),ref=refs[0];
@@ -159,5 +159,133 @@ test('AFOS-CHECK-P07 actual authenticated HTTP accepts bounded escaped draft and
       const content='\u0000'.repeat(64*1024),saved=await edit(content);assert.equal(saved.ok,true);assert.equal(saved.value.content,content);
       assert.equal((await edit(content+'a')).ok,false);assert.equal(f.tables.artifacts.size,0);
     }finally{release();}
+  }finally{await f.cleanup();}
+});
+
+test('AFOS-CHECK-P08 real Main offline projection preserves local edit; explicit restart never auto-archives',async()=>{
+  const f=await composed();try{
+    const started=await f.invoke('start',{sources:[f.ref],goal:'A draft to edit during network failure.',operationId:'offline-one'});assert.equal(started.ok,true);
+    const oldCtx=f.ctx(),oldBusiness=f.business();await oldCtx.agents.get(started.value.sessionId).whenIdle();
+    const current=await f.invoke('state');assert.equal(current.value.authority,'current');assert.ok(current.value.lastSyncAt);
+    const binding=f.business().localState().project;assert.equal(binding.id,'p1');
+    const verified=await f.business().currentAuthority(new AbortController().signal);
+    const lastSync=f.business().localState().lastSyncAt;
+    const before=f.modelCalls();f.disconnect();
+    const offline=await f.invoke('state');assert.equal(offline.ok,true,JSON.stringify(offline));assert.equal(offline.value.authority,'offline');
+    assert.equal(offline.value.lastSyncAt,lastSync);assert.equal(f.ctx(),oldCtx);
+    const edited=await f.invoke('edit',{draftId:started.value.draftId,content:'Human reviewed working copy while disconnected.'});assert.equal(edited.ok,true);
+    assert.equal((await f.invoke('materials')).ok,false);assert.equal((await f.invoke('snapshot',{ref:f.ref})).ok,false);
+    assert.equal((await f.invoke('start',{sources:[f.ref],goal:'Forbidden offline task.',operationId:'offline-new'})).ok,false);
+    assert.equal((await f.invoke('archive',{draftId:edited.value.draftId,expectedSha256:edited.value.sha256})).ok,false);
+    assert.equal(f.tables.artifacts.size,0);assert.equal(f.modelCalls(),before);
+    f.reconnect();assert.equal((await f.invoke('state')).value.authority,'offline');
+    await f.main.startHost();assert.notEqual(f.ctx(),oldCtx);await assert.rejects(oldBusiness.materials(new AbortController().signal));
+    // Explicit account restore closes Recovery and actually reopens its on-disk namespace.
+    const restartedBusiness=f.business();await f.main.restoreAccount(verified.binding,'p1');await f.main.startHost();
+    assert.throws(()=>restartedBusiness.drafts());
+    const restored=await f.invoke('state');assert.equal(restored.value.authority,'current');assert.equal(restored.value.drafts[0].content,edited.value.content);
+    assert.equal(f.tables.artifacts.size,0);assert.equal(f.modelCalls(),before);
+    const archived=await f.invoke('archive',{draftId:edited.value.draftId,expectedSha256:edited.value.sha256});assert.equal(archived.ok,true,JSON.stringify(archived));
+    assert.equal(archived.value.receipt.sha256,edited.value.sha256);assert.equal(f.tables.artifacts.size,1);
+  }finally{await f.cleanup();}
+});
+
+test('AFOS-CHECK-P09 offline outbox remains actor-bound; current revocation and account switch invalidate old callbacks',async()=>{
+  const f=await composed();try{
+    const started=await f.invoke('start',{sources:[f.ref],goal:'Actor-owned local content.',operationId:'actor-owned'});assert.equal(started.ok,true);
+    const oldCtx=f.ctx(),oldRuntime=oldCtx.afosDraftRuntime,oldBusiness=f.business();await oldCtx.agents.get(started.value.sessionId).whenIdle();
+    f.disconnect();assert.equal((await f.invoke('state')).value.authority,'offline');
+    assert.equal((await f.invoke('edit',{draftId:started.value.draftId,content:'Preserved alice outbox.'})).ok,true);
+    f.reconnect();f.principal('bob');await f.main.signIn();await f.main.selectProject('p1');await f.main.startHost();
+    assert.equal((await f.invoke('state')).value.drafts.length,0);assert.equal(f.tables.artifacts.size,0);
+    assert.throws(()=>oldBusiness.editDraft(started.value.draftId,'cross-account overwrite'));
+    assert.equal((await oldRuntime.invoke('state',{},new AbortController().signal)).ok,false);
+    const newRuntime=f.ctx().afosDraftRuntime;f.revoke();
+    const denied=await newRuntime.invoke('state',{},new AbortController().signal);assert.equal(denied.ok,false);assert.equal('value' in denied,false);
+  }finally{await f.cleanup();}
+});
+
+
+test('AFOS-CHECK-P10 Main offline latch precedes Runtime state and denies old callbacks after network recovery',async()=>{
+  const f=await composed();try{
+    const started=await f.invoke('start',{sources:[f.ref],goal:'Main authority gate.',operationId:'offline-main'});assert.equal(started.ok,true);
+    await f.ctx().agents.get(started.value.sessionId).whenIdle();
+    const business=f.business(),signal=new AbortController().signal;
+    f.disconnect();await assert.rejects(business.currentAuthority(signal),{code:'broker/request-failed'});
+    const local=business.localState();assert.equal(local.authority,'offline');
+    const edited=business.editDraft(started.value.draftId,'Offline human content.');
+    f.reconnect();const before=f.calls.length;
+    for(const operation of [()=>business.currentAuthority(signal),()=>business.materials(signal),()=>business.sessionRun(started.value.sessionId,signal),
+      ()=>business.prepareDraft(started.value.sessionId,'Late AI overwrite',[f.ref],signal),()=>business.archiveFromUser(edited.draftId,edited.sha256,signal)])
+      await assert.rejects(operation(),{code:'enterprise/offline-restart-required'});
+    assert.equal(f.calls.length,before);assert.equal(business.localState().authority,'offline');assert.equal(business.drafts()[0].content,edited.content);
+    assert.equal((await f.invoke('state')).value.authority,'offline');assert.equal(f.tables.artifacts.size,0);
+    await f.main.startHost();assert.throws(()=>business.drafts());assert.equal((await f.invoke('state')).value.authority,'current');
+  }finally{await f.cleanup();}
+});
+
+test('AFOS-CHECK-P11 completed malformed authority and known HTTP denial cut off local capabilities; body IO preserves offline',async()=>{
+  for(const mode of ['json200','utf8200','json401','json403','bodyIO']){
+    let enabled=false;
+    const f=await composed({response:request=>{
+      if(!enabled||request.action!=='identity.current')return;
+      if(mode==='bodyIO')return new Response(new ReadableStream({start(c){c.enqueue(new TextEncoder().encode('{'));c.error(new TypeError('fixture body transport lost'));}}));
+      return new Response(mode==='utf8200'?new Uint8Array([0xff]):'<html>not JSON</html>',{status:mode==='json401'?401:mode==='json403'?403:200});
+    }});try{
+      const business=f.business(),signal=new AbortController().signal;enabled=true;
+      await assert.rejects(business.currentAuthority(signal),{code:mode==='bodyIO'?'broker/request-failed':mode.endsWith('200')?'broker/invalid-response':'broker/request-denied'});
+      if(mode==='bodyIO'){assert.equal(business.localState().authority,'offline');assert.deepEqual(business.drafts(),[]);}
+      else {assert.throws(()=>business.localState());assert.throws(()=>business.drafts());}
+      assert.equal(f.tables.artifacts.size,0);
+    }finally{await f.cleanup();}
+  }
+});
+
+test('AFOS-CHECK-P12 offline cuts off original streaming Agent and in-flight render before local human edit',async()=>{
+  let entered;const begun=new Promise(r=>{entered=r;});
+  let release,paused=false;const hold=new Promise(r=>{release=r;});let armed=false;
+  const f=await composed({response:async request=>{if(armed&&request.action==='runs.getAuthorization'){paused=true;await hold;}},
+    model:(_request,signal)=>(async function*(){entered();await new Promise((resolve,reject)=>{if(signal.aborted){reject(signal.reason);return;}signal.addEventListener('abort',()=>reject(signal.reason),{once:true});});})()});try{
+    const started=await f.invoke('start',{sources:[f.ref],goal:'Streaming cutoff.',operationId:'offline-stream'});assert.equal(started.ok,true);await begun;
+    const business=f.business(),agent=f.ctx().agents.get(started.value.sessionId),signal=new AbortController().signal;
+    armed=true;const late=business.prepareDraft(started.value.sessionId,'Late original tool output',[f.ref],signal);
+    const failure=late.then(()=>false,()=>true);
+    while(!paused)await new Promise(r=>setImmediate(r));
+    f.disconnect();await assert.rejects(business.currentAuthority(signal),{code:'broker/request-failed'});
+    const edited=business.editDraft(started.value.draftId,'Human offline edit must survive.');
+    release();assert.equal(await failure,true);await agent.whenIdle();
+    assert.equal(business.drafts()[0].content,edited.content);assert.equal(business.drafts()[0].sha256,edited.sha256);
+    assert.equal(agent.session.snapshotEvents().at(-1).type,'turn/end');assert.equal(f.tables.artifacts.size,0);
+  }finally{release?.();await f.cleanup();}
+});
+
+
+test('AFOS-CHECK-P13 known refresh credential denial or malformed token invalidates the local account',async()=>{
+  for(const mode of ['invalidGrant','malformed200','html401','html403']){
+    let enabled=false;
+    const f=await composed({shortTokens:true,tokenResponse:()=>{
+      if(!enabled)return;
+      if(mode==='invalidGrant')return Response.json({error:'invalid_grant'},{status:401});
+      return new Response('<html>token failure</html>',{status:mode==='html401'?401:mode==='html403'?403:200});
+    }});try{
+      const business=f.business();enabled=true;
+      await assert.rejects(business.currentAuthority(new AbortController().signal),{code:mode==='invalidGrant'?'auth/invalid-grant':mode==='malformed200'?'auth/invalid-response':'auth/request-denied'});
+      assert.throws(()=>business.localState());assert.throws(()=>business.drafts());assert.equal(f.tables.artifacts.size,0);
+    }finally{await f.cleanup();}
+  }
+});
+
+
+test('AFOS-CHECK-P14 an already-received HTTP denial revokes local account despite concurrent offline abort',async()=>{
+  let enabled=false,entered;const begun=new Promise(r=>{entered=r;});
+  const f=await composed({response:request=>{
+    if(enabled&&request.action==='identity.current')return new Response(new ReadableStream({pull(){entered();return new Promise(()=>{});}}),{status:401});
+  }});try{
+    const business=f.business(),signal=new AbortController().signal;enabled=true;
+    const pending=business.currentAuthority(signal).then(()=>undefined,error=>error);
+    await begun;await new Promise(r=>setImmediate(r));
+    f.disconnect();await assert.rejects(business.currentAuthority(signal),{code:'broker/request-failed'});
+    assert.equal((await pending).code,'broker/request-denied');
+    assert.throws(()=>business.localState());assert.throws(()=>business.drafts());assert.equal(f.tables.artifacts.size,0);
   }finally{await f.cleanup();}
 });

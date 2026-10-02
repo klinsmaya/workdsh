@@ -40,15 +40,20 @@ Adapter 与 handles 均由官方生命周期拥有。Main 同步撤销能力并�
 每次 Host 启动使前一 Host 捕获的回调失效。
 
 草稿正文复用公开 64 KiB UTF-8 限额，JSON 准入覆盖最坏转义膨胀；资料快照另限
-1 MiB。初版 recovery store 每个 namespace 最多八份草稿。离线/新账号恢复与
-完整原生 UI 仍需接线；没有浏览器 outbox 或第二套执行状态真源。
+1 MiB。初版 recovery store 每个 namespace 最多八份草稿。传输断开后 Main 保留
+已验证的本地草稿和最后联系时间，同步取消企业执行；人工本地编辑仍可用。
+重连不恢复旧回调，必须由可信 Main 明确重启 Host、重新验证权限并更换生命周期。
+完整响应的 JSON/UTF-8 异常和已知拒绝会撤销账号，不进入离线回退。
+显式账号恢复会实际重读同一磁盘 namespace；切换账号不重放其他主体的草稿。
+完整原生 UI 接线仍需完成；没有浏览器 outbox 或第二套执行状态真源。
 
 在 `workdsh-web` 编译契约与本包后运行 `test`、`typecheck`。在独立
 `enterprise/plugin-agent-bridge` 执行 `corepack pnpm test:profile`，先构建 Profile
-workspace 前置，再运行七项真实官方运行时集成检查。身份、ACL 持久层和模型回复
+workspace 前置，再运行十四项真实官方运行时集成检查。身份、ACL 持久层和模型回复
 为夹具；覆盖真实工具 turn、持久草稿/哈希确认、已认证 HTTP 和物理 WS 拒绝、
 取消、当前 Run policy、模型 dispatch 时撤权、失败占用释放、重复启动及转义内容
-边界。夹具/Linux 证据不算目标桌面验收。DSH 保持锁定；官方 Cordis ~4.0.4 peer
+边界，以及离线编辑/磁盘重读、界面刷新前的 Main 准入锁、异常响应/body IO
+迟到原版 render/stream 的取消已知 refresh token 拒绝及并发拒绝/断网取消。夹具/Linux 证据不算目标桌面验收。DSH 保持锁定；官方 Cordis ~4.0.4 peer
 与消费方 4.0.3 override 的偏离仍须安装包兼容验证。
 
 支持任务 D01/D04/D05/D07/D08/D09/D10。正式 AT-03/07/08/10/11/13–18/20/22–23/

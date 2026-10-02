@@ -37,6 +37,7 @@ export class EnterpriseDraftRuntime extends Service {
   #starting = false;
   #active: Agent | undefined;
   #lastSyncAt: string | undefined;
+  #offline = false;
   constructor(ctx: Context, config: RuntimeConfig) {
     super(ctx, 'afosDraftRuntime');
     if (!config?.model || !Number.isSafeInteger(config.model.maxTokens) || config.model.maxTokens < 1) fail();
@@ -114,9 +115,18 @@ export class EnterpriseDraftRuntime extends Service {
     if (!result) fail(); return result;
   }
   private async state(): Promise<EnterpriseDraftState> {
-    const authority = await this.ctx.afosMainBusiness.currentAuthority(this.signal()); this.#lastSyncAt = new Date().toISOString();
-    return Object.freeze({ contractVersion: 'afos.drafts.v1', project: Object.freeze({ id: authority.project.id, name: authority.project.name }),
-      authority: 'current', lastSyncAt: this.#lastSyncAt, drafts: Object.freeze(this.ctx.afosMainBusiness.drafts().map(draftView)) });
+    if (!this.#offline) {
+      try { await this.ctx.afosMainBusiness.currentAuthority(this.signal()); }
+      catch (error) {
+        const local = this.ctx.afosMainBusiness.localState();
+        if (local.authority !== 'offline') throw error;
+        this.#offline = true;
+        this.#active?.cancel({ kind: 'hook', reason: 'afos-authority-offline' });
+      }
+    }
+    const local = this.ctx.afosMainBusiness.localState(); this.#lastSyncAt = local.lastSyncAt;
+    return Object.freeze({ contractVersion: 'afos.drafts.v1', project: Object.freeze({ id: local.project.id, name: local.project.name }),
+      authority: this.#offline ? 'offline' : local.authority, lastSyncAt: this.#lastSyncAt, drafts: Object.freeze(this.ctx.afosMainBusiness.drafts().map(draftView)) });
   }
   private async start(value: unknown, callerSignal: AbortSignal): Promise<EnterpriseDraftView> {
     exact(value, ['sources', 'goal', 'operationId']); id(value.operationId);
@@ -171,6 +181,7 @@ export class EnterpriseDraftRuntime extends Service {
     const signal = this.signal(callerSignal);
     try {
       signal.throwIfAborted(); if (Buffer.byteLength(JSON.stringify(payload) ?? '') > ENTERPRISE_DRAFT_MAX_BYTES * 6 + 16 * 1024) fail();
+      if (this.#offline && !['afos/drafts/state', 'afos/drafts/edit', 'afos/drafts/cancel'].includes(endpoint)) fail();
       let value: unknown;
       if (endpoint === 'afos/drafts/state') { exact(payload, []); value = await this.state(); }
       else if (endpoint === 'afos/drafts/materials') { exact(payload, []); value = await this.ctx.afosMainBusiness.materials(signal); }

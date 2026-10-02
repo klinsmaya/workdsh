@@ -54,18 +54,27 @@ callbacks captured by its predecessor.
 
 Draft content is bounded to the public 64 KiB UTF-8 limit. JSON admission allows
 its worst-case escaping; material snapshots have a separate 1 MiB limit. The
-initial recovery store is bounded to eight drafts per namespace. Offline/new
-account recovery and a complete native UI still need integration; no browser
-outbox or second execution state source is added.
+initial recovery store is bounded to eight drafts per namespace. On transport
+failure Main preserves verified local drafts, shows the last successful contact,
+and synchronously aborts enterprise execution. Human local editing remains
+available. Reconnection does not reactivate old callbacks: only explicit trusted
+Main Host restart revalidates authority and replaces the Host lifetime. Completed
+invalid JSON/UTF-8 and known denials cut off the account instead of entering an
+offline view. Explicit account restoration actually reopens the same on-disk
+namespace; account switching never replays another subject's drafts. No browser
+outbox or second execution state source is added. Complete native UI integration
+remains separate.
 
 From `workdsh-web`, build the contracts and this package, then run its `test` and
 `typecheck` scripts. From the independent `enterprise/plugin-agent-bridge`
 workspace, `corepack pnpm test:profile` builds the Profile's workspace prerequisites
-and runs seven real official-runtime integration cases using fixture identity,
+and runs fourteen real official-runtime integration cases using fixture identity,
 ACL persistence and model replies. These cover actual tool turns, durable draft
 and hash confirmation, authenticated HTTP and physical WS refusal, cancellation,
 current Run policy, revocation at model dispatch, failed admission, repeated boot,
-and escaped-content size. Fixture/Linux evidence is not target desktop acceptance.
+escaped-content size, offline editing/reopening, sticky Main admission before
+Runtime refresh, malformed responses/body IO, and late original render/stream
+cutoff and known refresh-token denial and concurrent denial/offline abort. Fixture/Linux evidence is not target desktop acceptance.
 DSH is pinned; official Cordis peers ~4.0.4 still differ from WorkDSH's 4.0.3
 consumer override and need packaged compatibility validation.
 

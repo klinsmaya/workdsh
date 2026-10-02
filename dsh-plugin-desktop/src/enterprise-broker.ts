@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { accountNamespace } from './desktop-auth.ts'
+import { accountNamespace, DesktopAuthError } from './desktop-auth.ts'
 
 export interface BrokerCredentials {
   accessToken(signal?: AbortSignal): Promise<string>
@@ -87,7 +87,10 @@ async function json(response: Response, signal: AbortSignal): Promise<Record<str
       if (size > 7 * MAX_BYTES) fail('broker/response-too-large')
       chunks.push(chunk.value)
     }
-    return object(JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown)
+    let parsed: unknown
+    try { parsed = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks))) as unknown }
+    catch { fail('broker/invalid-response') }
+    return object(parsed)
   } finally { void reader.cancel().catch(() => undefined); try { reader.releaseLock() } catch { /* cancellation owns any pending read */ } }
 }
 
@@ -155,7 +158,13 @@ export class EnterpriseBroker {
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify({ contractVersion: 'afos.bridge.v1', action, params }),
       }), combined, late => { void late.body?.cancel().catch(() => undefined) })
-      const body = await json(response, combined)
+      // A received 4xx is a known denial even when its body is HTML, malformed,
+      // empty or interrupted. It must never become an offline fallback or an
+      // uncertain commit retry. Other dispatched commit outcomes remain unknown.
+      knownDenial = response.status >= 400 && response.status < 500
+      let body: Record<string, unknown>
+      try { body = await json(response, combined) }
+      catch (error) { if (knownDenial) throw new EnterpriseBrokerError('broker/request-denied'); throw error }
       if (generation !== this.generation || combined.aborted) fail('broker/account-changed')
       if (!response.ok) {
         knownDenial = response.status >= 400 && response.status < 500
@@ -169,6 +178,7 @@ export class EnterpriseBroker {
         throw new EnterpriseBrokerError('broker/reconcile-required', true)
       }
       if (error instanceof EnterpriseBrokerError) throw error
+      if (error instanceof DesktopAuthError) throw new EnterpriseBrokerError(error.code)
       if (generation !== this.generation) throw new EnterpriseBrokerError('broker/account-changed')
       throw new EnterpriseBrokerError('broker/request-failed')
     }

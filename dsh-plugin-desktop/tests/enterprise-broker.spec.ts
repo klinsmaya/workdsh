@@ -5,7 +5,7 @@ import { EnterpriseBroker, EnterpriseBrokerError } from '../src/enterprise-broke
 const issuer = 'https://enterprise.example/api'
 const sha = (text: string) => createHash('sha256').update(text).digest('hex')
 const input = { materialId: 'material-a', revisionId: 'v1', sha256: sha('verified source') }
-function fixture(options: { revoked?: boolean; wrongBinding?: boolean; wrongHash?: boolean; lostCommit?: boolean; malformedCommit?: boolean; denyCommit?: boolean; credentialFailureBeforeCommit?: boolean; issuedAt?: string; expiresAt?: string; modelBody?: ReadableStream<Uint8Array> } = {}) {
+function fixture(options: { revoked?: boolean; wrongBinding?: boolean; wrongHash?: boolean; lostCommit?: boolean; malformedCommit?: boolean; rawCommit?: 'malformed' | 'denied'; denyCommit?: boolean; credentialFailureBeforeCommit?: boolean; issuedAt?: string; expiresAt?: string; modelBody?: ReadableStream<Uint8Array> } = {}) {
   const calls: string[] = []
   let receipt: Record<string, unknown> | undefined
   let content = ''
@@ -46,6 +46,7 @@ function fixture(options: { revoked?: boolean; wrongBinding?: boolean; wrongHash
       return Response.json({ contractVersion: 'afos.bridge.v1', uploadId: 'upload-a', received: true })
     }
     if (body.action === 'artifacts.commitDraft') {
+      if (options.rawCommit) return new Response('<html>fixture</html>', { status: options.rawCommit === 'denied' ? 403 : 200 })
       if (options.denyCommit) return Response.json({ code: 'afos/project-denied' }, { status: 403 })
       receipt = { contractVersion: 'afos.receipt.v1', receiptId: 'receipt-a', runId: 'run-a', attempt: 1, artifactId: 'artifact-a', revisionId: 'draft-v1', sha256: sha(content), committedAt: new Date().toISOString(), hidden: 'not-returned' }
       if (options.lostCommit) throw new Error('network error with private test details')
@@ -283,4 +284,30 @@ it('cancels noncooperative credential admission without dispatching model fetch'
   await new Promise(resolve => setImmediate(resolve))
   f.broker.close()
   await expect(next).rejects.toThrow('broker/model-cancelled')
+})
+
+it.each([
+  { status: 200, body: '<html>invalid</html>', expected: 'broker/invalid-response' },
+  { status: 200, body: new Uint8Array([0xff]), expected: 'broker/invalid-response' },
+  { status: 401, body: '<html>denied</html>', expected: 'broker/request-denied' },
+  { status: 403, body: '<html>denied</html>', expected: 'broker/request-denied' },
+])('classifies a completed malformed response and known denial: $status / $expected', async ({ status, body, expected }) => {
+  const broker = new EnterpriseBroker(issuer, { accessToken: async () => 'test-access' }, async () => new Response(body, { status }))
+  await expect(broker.projects()).rejects.toThrow(expected)
+})
+it('keeps a genuine response body transport failure distinct from completed invalid JSON', async () => {
+  const broker = new EnterpriseBroker(issuer, { accessToken: async () => 'test-access' }, async () => new Response(new ReadableStream({
+    start(controller) { controller.enqueue(new TextEncoder().encode('{')); controller.error(new TypeError('fixture body IO lost')) },
+  })))
+  await expect(broker.projects()).rejects.toThrow('broker/request-failed')
+})
+
+it.each(['malformed', 'denied'] as const)('classifies dispatched commit with malformed body: %s', async rawCommit => {
+  const f = fixture({ rawCommit }); await f.ready()
+  try { await f.broker.archiveDraft('run-a', 'draft', 'commit-a'); throw new Error('must reject') }
+  catch (error) {
+    expect(error).toBeInstanceOf(EnterpriseBrokerError)
+    expect((error as EnterpriseBrokerError).code).toBe(rawCommit === 'denied' ? 'broker/request-denied' : 'broker/reconcile-required')
+    expect((error as EnterpriseBrokerError).outcomeUnknown).toBe(rawCommit !== 'denied')
+  }
 })
