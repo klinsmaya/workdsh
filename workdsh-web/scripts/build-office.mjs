@@ -1,5 +1,6 @@
 import './scope-pptx-native.mjs';
 import {nativePptPlugin} from './build-pptx-native.mjs';
+import {exceljsBrowserPlugin, officeBrowserInject, verifyExceljsBrowserInputs} from './exceljs-browser.mjs';
 import { build } from "esbuild";
 import {createHash} from "node:crypto";
 import { mkdir, writeFile, readFile, readdir } from "node:fs/promises";
@@ -35,8 +36,10 @@ const child = await build({
   format: "iife",
   platform: "browser",
   target: "es2022",
+  inject: officeBrowserInject,
+  plugins: [exceljsBrowserPlugin()],
   loader: { ".woff": "dataurl", ".woff2": "dataurl", ".ttf": "dataurl" },
-  define: { "process.env.NODE_ENV": '"production"', __WORKDSH_WORD_ONLY__: String(wordOnly) },
+  define: { "process.env.NODE_ENV": '"production"', global: 'globalThis', __WORKDSH_WORD_ONLY__: String(wordOnly) },
 });
 const js = child.outputFiles
   .find((f) => f.path.endsWith(".js"))
@@ -51,12 +54,14 @@ const client = await build({
   write: false,
   format: "cjs",
   platform: "browser",
+  inject: officeBrowserInject,
   external: ["@deepseek-ai/dsh-client-ui-primitives", "react", "react-dom", "react/jsx-runtime"],
   loader:{".css":"text"},
-  define: { "process.env.NODE_ENV": '"production"', __WORKDSH_WORD_ONLY__: String(wordOnly) },
+  define: { "process.env.NODE_ENV": '"production"', global: 'globalThis', __WORKDSH_WORD_ONLY__: String(wordOnly) },
   plugins: [
     {name:"pdf-worker-source",setup(builder){builder.onLoad({filter:/pdf\.worker\.min\.mjs$/},async args=>({contents:await readFile(args.path,"utf8"),loader:"text"}));}},
     nativePptPlugin(),
+    exceljsBrowserPlugin(),
     spreadsheetScope,
     {
       name: "editor-html",
@@ -77,6 +82,10 @@ await writeFile(
   new URL("dist/client.browser.js", root),
   `window.__ModuleLoader__.load({id:"workdsh-plugin-office",factory:function(require){const module={exports:{}};${client.outputFiles[0].text}\nreturn module.exports;}});`,
 );
+await writeFile(new URL('dist/browser-build-inputs.json', root), JSON.stringify({
+  editor: verifyExceljsBrowserInputs(child.metafile),
+  client: verifyExceljsBrowserInputs(client.metafile),
+}, null, 2) + '\n');
 const host = await build({
   metafile: true,
   entryPoints: [fileURLToPath(new URL("src/index.ts", root))],

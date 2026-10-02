@@ -40,14 +40,20 @@ desktop, sandbox, identity, business ACL, or license acceptance.
 分别在所属 workspace 执行上述审计命令，保留原始结果、锁摘要和日期。审计零发现
 不等于桌面、沙箱、身份、业务权限或许可验收通过。
 
+The Office browser now builds exact ExcelJS 4.4.0 `lib/exceljs.bare.js` source
+with UUID 11.1.1's actual browser entry. The consuming build checks both editor
+and client inputs, refuses the old precompiled bundle and denies browser file
+operations. Real Chromium checks exercise cold loading, XLSX export, UUID buffer
+bounds and synchronous worksheet protection. Only that consuming path is closed;
+the upstream tarball remains unchanged. Root's integrated lock audit records
+1210 dependencies and zero registry findings on 2026-10-02, with raw evidence.
+
+Office 浏览器已使用精确 ExcelJS 源码和 UUID 11.1.1 browser entry；两份实际产物
+的冷加载、XLSX 导出、UUID 边界和保护哈希通过真实 Chromium 检查。仅该消费路径
+已关闭，不代表上游 tarball 或完整安全门槛通过。Root 新锁审计 1210 依赖、零公告。
+
 Remaining at this milestone / 本阶段仍未关闭：
 
-- ExcelJS 4.4.0's official browser `dist/exceljs.min.js` embeds an older UUID
-  implementation. The Node dependency override does not replace those bytes.
-  The actual Office client consumes that precompiled bundle; isolated execution
-  confirms that its `v3`/`v5` output-buffer range checks remain vulnerable.
-  npm audit's zero findings describe its dependency graph, not this bundle.
-  ExcelJS 浏览器预编译包仍内嵌旧 UUID；Node override 和零审计均未关闭该问题。
 - Bridge's NocoBase → AI → OfficeParser graph contains PDF.js 5.6.205.
   [GHSA-hq66-cqwq-w95j](https://github.com/advisories/GHSA-hq66-cqwq-w95j)
   requires 6.2.108. A transitive override cannot replace PDF.js embedded in
@@ -61,9 +67,9 @@ Remaining at this milestone / 本阶段仍未关闭：
   An open, unmerged PR is not an official release. Native activation remains
   refused until enforcement and the security gate are independently verified.
   Native 的 node-forge 尚无已发布修复；停用路径属于限制措施，不算漏洞已修复。
-- Node 22, Windows/macOS, real SQL/IdP/vendor and packaged runtime checks are
+- Node 22, Windows/macOS, deployed SQL/IdP/vendor and packaged runtime checks are
   not established by these Linux checks. Those acceptance rows remain open.
-  Linux 验证不替代 Node 22、目标系统、真实 SQL/IdP/模型与安装包验收。
+  Linux 验证不替代 Node 22、目标系统、部署 SQL/IdP/模型与安装包验收。
 
 Rollback is a local source revert followed by a frozen-lockfile install and
 the same consumer checks. Preserve all Profiles, Sessions, namespaces, drafts,
