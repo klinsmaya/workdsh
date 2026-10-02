@@ -20,4 +20,19 @@ Administrator provisioning, actual IdP/ACL/repository hooks, database isolation 
 
 Optional `model` configuration is disabled unless `enabled: true` is explicitly supplied by the trusted server owner. The fixed `afos.model.v1` stream on the same gateway uses the original owned Run and the official DSH Adapter. Its provider/model/HTTPS endpoint and secret resolver are server configuration, not wire fields. Current token/Grant/client/device/project/source/release/policy and uncached native `users.roles` association are rechecked at admission, each chunk and a one-second idle poll. Initial selected roles cannot expand during a stream; unverified department `attachRoles` are denied. Disconnect listeners start before asynchronous admission and plugin disable aborts all streams.
 
-Private `afosModelBudgets` and `afosModelCalls` repositories reserve and settle in SERIALIZABLE transactions with row locks. Only canonical accounting fields are stored, never prompts or vendor keys. Unknown usage retains the reservation; known provider usage records the actual counter even if higher than reserved. Fixed `contextWindow` must be verified against the real provider as a reservation bound. This source does not establish a strict monetary cap, real vendor billing, or cross-process SQL isolation: those remain NOT_RUN. The repository transaction tests are fixtures, not a deployed database test.
+Private `afosModelBudgets` and `afosModelCalls` repositories reserve and settle in SERIALIZABLE transactions with row locks. Only canonical accounting fields are stored, never prompts or vendor keys. Unknown usage retains the reservation; known provider usage records the actual counter even if higher than reserved. Fixed `contextWindow` must be verified against the real provider as a reservation bound. This source does not establish a strict monetary cap, real vendor billing, or isolation in an unknown deployed SQL dialect. An additional isolated check uses
+exact official NocoBase packages and real SQLite repositories/native transactions;
+it includes independent connections and two-process contention, rollback, unique
+constraints, immutable hooks and current role/member revocation. Identity/ACL
+service admission remains a fixture. SQLite SERIALIZABLE uses BEGIN DEFERRED and
+one competing write fails with SQLITE_BUSY; it does not establish PostgreSQL or
+MySQL row-lock behavior. No production database is opened.
+
+From the authorized repository root run
+`node enterprise/plugin-agent-bridge/scripts/run-sql-integration.mjs`. It copies
+source into a fresh temporary staging area, uses its own caches/store, adds only
+`sqlite3@5.1.7` in that staging manifest and runs six recorded install/build/test
+stages. The 13 AFOS-SQL checks support AT-18/20/22/33/38/39/47 without promoting
+formal acceptance. The owning product manifest and lock remain unchanged. Logs,
+staging locks and source hashes are retained for review. Rollback removes the
+four optional test files; no business data is deleted.

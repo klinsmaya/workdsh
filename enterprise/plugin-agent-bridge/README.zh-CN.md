@@ -20,4 +20,14 @@ POST `<issuer-path>/afos` 使用 `{ "contractVersion": "afos.bridge.v1", "action
 
 可选 `model` 配置仅在受信任服务端负责人明确设置 `enabled: true` 后开放。同一网关的固定 `afos.model.v1` 流复用原始所属 Run 和官方 DSH Adapter。供应商、模型、HTTPS 地址与密钥解析函数来自服务端配置，不能由请求指定。入口、每个块和每秒空闲轮询都会重查 Token/Grant/client/device/project/source/release/policy 与不经过缓存的原生 `users.roles` 关联。流期间不能扩大初始所选角色；未验证的部门 `attachRoles` 直接拒绝。连接断开监听早于异步准入，禁用插件会取消全部流。
 
-私有 `afosModelBudgets` 与 `afosModelCalls` 仓库使用 SERIALIZABLE 事务和行锁预留、结算，只保存规范化核算字段，不保存提示词或供应商密钥。未知用量保留预留；供应商已知用量按实际计数记录，即使高于预留。必须以真实供应商验证固定 `contextWindow` 可作为预留上界。本源码不证明严格金额封顶、真实计费或跨进程 SQL 隔离，这些保持 NOT_RUN。仓库事务测试使用 fixture，不能当作已部署数据库测试。
+私有 `afosModelBudgets` 与 `afosModelCalls` 仓库使用 SERIALIZABLE 事务和行锁预留、结算，只保存规范化核算字段，不保存提示词或供应商密钥。未知用量保留预留；供应商已知用量按实际计数记录，即使高于预留。必须以真实供应商验证固定 `contextWindow` 可作为预留上界。本源码不证明严格金额封顶、真实计费或未知部署方言的 SQL 隔离。新增隔离检查使用精确官方 NocoBase 包和真实 SQLite
+repository/native transaction，覆盖独立连接及两个进程竞争、事务回滚、唯一键、
+不可变 hooks、当前角色和成员撤权；身份/ACL 服务准入仍是 fixture。SQLite 的
+SERIALIZABLE 实际为 BEGIN DEFERRED，竞争写入一方以 SQLITE_BUSY 拒绝；不证明
+PostgreSQL/MySQL 行锁行为，没有打开生产数据库。
+
+从获准仓库根运行 `node enterprise/plugin-agent-bridge/scripts/run-sql-integration.mjs`。
+它只读复制源码到新临时 staging，独立 cache/store，仅在 staging manifest 加入
+`sqlite3@5.1.7`，执行六阶段安装/构建/测试并留存日志、锁和输入摘要。13 项
+AFOS-SQL 检查为 AT-18/20/22/33/38/39/47 提供子证据，不提升正式验收。
+产品 manifest/lock 不变。回滚仅撤下四个可选测试文件，不删除业务数据。
