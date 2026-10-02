@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:afos:design:run-authorization:v1",
+  "title": "PROPOSED RunAuthorization response; not a token validator",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractVersion",
+    "runId",
+    "attempt",
+    "binding",
+    "projectId",
+    "releaseId",
+    "policyRevision",
+    "inputRefs",
+    "allowedActions",
+    "issuedAt",
+    "expiresAt"
+  ],
+  "properties": {
+    "contractVersion": {
+      "const": "afos.run.v1"
+    },
+    "runId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "attempt": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "issuer",
+        "subject",
+        "organizationId",
+        "deviceId"
+      ],
+      "properties": {
+        "issuer": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "subject": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "organizationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "deviceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      }
+    },
+    "projectId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "releaseId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "policyRevision": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "inputRefs": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "materialId",
+          "revisionId",
+          "sha256"
+        ],
+        "properties": {
+          "materialId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "revisionId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        }
+      }
+    },
+    "allowedActions": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "materials.readRevision",
+          "artifacts.stageUpload",
+          "artifacts.commitDraft",
+          "runs.getReceipt"
+        ]
+      }
+    },
+    "issuedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "expiresAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

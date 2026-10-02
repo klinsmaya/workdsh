@@ -1,0 +1,40 @@
+{
+  "name": "@afos/plugin-agent-bridge",
+  "version": "0.1.0-alpha.1",
+  "private": true,
+  "type": "module",
+  "main": "dist/server/plugin.js",
+  "packageManager": "pnpm@10.34.5",
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "scripts": {
+    "test": "corepack pnpm build && node --experimental-strip-types --test src/server/__tests__/*.test.mjs",
+    "typecheck:core": "tsc -p tsconfig.core.json",
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "jose": "6.2.1"
+  },
+  "peerDependencies": {
+    "@nocobase/database": "2.4.0-alpha.9",
+    "@nocobase/resourcer": "2.4.0-alpha.9",
+    "@nocobase/server": "2.4.0-alpha.9"
+  },
+  "devDependencies": {
+    "ajv": "8.20.0",
+    "execa": "5.1.1",
+    "fast-glob": "3.3.3",
+    "@nocobase/database": "2.4.0-alpha.9",
+    "@nocobase/resourcer": "2.4.0-alpha.9",
+    "@nocobase/server": "2.4.0-alpha.9",
+    "typescript": "6.0.3",
+    "@types/node": "22.20.0"
+  },
+  "files": [
+    "dist",
+    "contracts",
+    "README.md",
+    "README.zh-CN.md"
+  ]
+}

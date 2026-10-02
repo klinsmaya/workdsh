@@ -13,9 +13,10 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs'
-import { isAbsolute, join } from 'node:path'
+import { basename, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { syncBundledCompatibility } from './runtime-compatibility.ts'
+import { isRuntimeDownload, isRuntimeNavigation, redactRuntimeLog, runtimeEnvironment, RuntimeLogFilter, safeExternalUrl, stopRuntimeTree } from './runtime-security.ts'
 
 const PROFILE_NAME = 'workdsh'
 const READY_PATTERN = /dsh web:\s+(http:\/\/127\.0\.0\.1:\d+\/?\?token=[^\s]+)/u
@@ -23,6 +24,7 @@ const READY_PATTERN = /dsh web:\s+(http:\/\/127\.0\.0\.1:\d+\/?\?token=[^\s]+)/u
 let runtime: ChildProcess | undefined
 let window: BrowserWindow | undefined
 let quitting = false
+let cleanupComplete = false
 
 function bundledProfileDirectory(): string {
   const overridden = process.env.WORKDSH_BUNDLED_PROFILE
@@ -153,8 +155,23 @@ function openWindow(url: string): void {
     window?.setTitle('WorkDSH')
   })
   window.webContents.setWindowOpenHandler(({ url: target }) => {
-    if (target.startsWith('https://') || target.startsWith('http://')) void shell.openExternal(target)
+    const external = safeExternalUrl(target)
+    if (external) shell.openExternal(external).catch(() => process.stderr.write('External navigation failed\n'))
     return { action: 'deny' }
+  })
+  window.webContents.on('will-navigate', (event, target) => {
+    if (!isRuntimeNavigation(target, url)) event.preventDefault()
+  })
+  window.webContents.on('will-redirect', (event, target) => {
+    if (!isRuntimeNavigation(target, url)) event.preventDefault()
+  })
+  window.webContents.session.on('will-download', (event, item, sender) => {
+    if (sender !== window?.webContents || ![item.getURL(),...item.getURLChain()].every(target => isRuntimeDownload(target,url))) {
+      event.preventDefault();return
+    }
+    // Electron owns the save dialog; renderer content never supplies a file path.
+    const filename=basename(item.getFilename()).replace(/[\u0000-\u001f]/gu,'')
+    item.setSaveDialogOptions({defaultPath:join(app.getPath('downloads'),filename&&filename!=='.'&&filename!=='..'?filename:'WorkDSH-export')})
   })
   void window.loadURL(url).then(() => window?.show())
   window.on('closed', () => { window = undefined })
@@ -167,7 +184,7 @@ function startRuntime(home: string, profileDir: string): void {
   if (!existsSync(executable)) throw new Error(`Bundled Node.js runtime is missing: ${executable}`)
   const child = spawn(executable, [cli, '--profile', PROFILE_NAME, '--no-open'], {
     env: {
-      ...process.env,
+      ...runtimeEnvironment(process.env),
       DSH_HOME: home,
       DSH_AGENTS_HOME: join(home, 'agents'),
       DSH_BUNDLED_PRIMARY_RUNTIME: bundledPrimaryRuntime(),
@@ -176,13 +193,17 @@ function startRuntime(home: string, profileDir: string): void {
     },
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
+    detached: process.platform !== 'win32',
+    cwd: home,
   })
   runtime = child
   let ready = false
   let output = ''
+  const stdoutLog = new RuntimeLogFilter(text => process.stderr.write(text))
+  const stderrLog = new RuntimeLogFilter(text => process.stderr.write(text))
   const consume = (chunk: Buffer): void => {
     const text = chunk.toString('utf8')
-    process.stderr.write(text)
+    stdoutLog.consume(chunk)
     if (ready) return
     output = `${output}${text}`.slice(-16_384)
     const match = READY_PATTERN.exec(output)
@@ -192,19 +213,20 @@ function startRuntime(home: string, profileDir: string): void {
     }
   }
   child.stdout.on('data', consume)
-  child.stderr.on('data', chunk => process.stderr.write(chunk))
+  child.stderr.on('data', (chunk: Buffer) => stderrLog.consume(chunk))
   child.once('error', cause => {
     if (!quitting) throw cause
   })
   child.once('exit', code => {
-    runtime = undefined
+    stdoutLog.flush()
+    stderrLog.flush()
     if (!quitting && code !== 0) app.quit()
   })
 }
 
-function stopRuntime(): void {
+async function stopRuntime(): Promise<void> {
   quitting = true
-  if (runtime !== undefined && runtime.exitCode === null) runtime.kill('SIGTERM')
+  if (runtime !== undefined) await stopRuntimeTree(runtime)
   runtime = undefined
 }
 
@@ -221,7 +243,15 @@ if (!app.requestSingleInstanceLock()) {
     if (window.isMinimized()) window.restore()
     window.focus()
   })
-  app.on('before-quit', stopRuntime)
+  app.on('before-quit', event => {
+    if (cleanupComplete) return
+    event.preventDefault()
+    if (quitting) return
+    stopRuntime().then(() => { cleanupComplete = true; app.quit() }).catch(() => {
+      process.stderr.write('WorkDSH runtime cleanup failed; application remains open\n')
+      quitting = false
+    })
+  })
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit()
   })
@@ -238,7 +268,7 @@ if (!app.requestSingleInstanceLock()) {
     const profile = materializeRuntimeProfile(home)
     startRuntime(home, profile)
   }).catch(cause => {
-    process.stderr.write(`WorkDSH failed to start: ${cause instanceof Error ? cause.stack ?? cause.message : String(cause)}\n`)
+    process.stderr.write(redactRuntimeLog(`WorkDSH failed to start: ${cause instanceof Error ? cause.message : String(cause)}\n`))
     app.quit()
   })
 }

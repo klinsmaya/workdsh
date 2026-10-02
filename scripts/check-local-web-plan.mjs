@@ -5,8 +5,8 @@ import { resolve } from 'node:path'
 const root = resolve(import.meta.dirname, '..')
 const web = resolve(root, 'workdsh-web')
 
-if (!existsSync(resolve(web, 'docs'))) {
-  process.stdout.write('SKIP: local-only workdsh-web/docs is absent\n')
+if (!existsSync(resolve(web, 'docs/modules.json'))) {
+  process.stdout.write('SKIP: canonical local Web plan inventory is absent; separate local scope notes are not that inventory\n')
 } else {
   const result = spawnSync(process.execPath, ['scripts/check-plan.mjs'], { cwd: web, stdio: 'inherit' })
   if (result.error) throw result.error

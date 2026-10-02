@@ -1,0 +1,10 @@
+--- a/packages/plugins/@nocobase/plugin-idp-oauth/src/server/service.ts
++++ b/packages/plugins/@nocobase/plugin-idp-oauth/src/server/service.ts
+@@ -947,6 +947,7 @@
+       extraTokenClaims: async (_ctx: any, token: any) => {
+         return {
+           client_id: token.clientId,
++          grant_id: token.grantId,
+           iss: issuer,
+         };
+       },
