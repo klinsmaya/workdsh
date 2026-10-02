@@ -26,6 +26,7 @@ export interface MainBusinessCapabilities {
   releaseRunAdmission(runId: string): void;
   prepareSessionBinding(runId: string, sessionId: string, signal: AbortSignal): Promise<{ commit(): void; dispose(): void }>;
   sessionRun(sessionId: string, signal: AbortSignal): Promise<OwnedEnterpriseRun>;
+  ownedSessionRead(sessionId: string, signal: AbortSignal): Promise<{ readonly sessionId: string; readonly epoch: object; readonly signal: AbortSignal; readonly expiresAt: string }>;
   readPinnedSnapshot(sessionId: string, ref: Pick<EnterpriseSourceRef, 'materialId' | 'revisionId'>, signal: AbortSignal): Promise<EnterpriseSourceRef & { readonly text: string }>;
   prepareDraft(sessionId: string, content: string, refs: readonly EnterpriseSourceRef[], signal: AbortSignal): Promise<{ readonly text: string; readonly sources: readonly EnterpriseSourceRef[]; readonly status: 'local-draft' }>;
   modelBytes(sessionId: string, request: unknown, signal: AbortSignal): AsyncIterable<Uint8Array>;

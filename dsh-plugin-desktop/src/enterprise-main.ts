@@ -4,6 +4,13 @@ import { EnterpriseRecoveryStore, type DraftRecord, type OfficialSessionSummaryE
 
 /** Private trusted Host callback. Only official Agent setup receives a publication lease. */
 export interface EnterpriseSessionBindingLease { commit(): void; dispose(): void }
+/** Fresh read permission for a Main-owned draft Session; independent of Run TTL. */
+export interface EnterpriseOwnedSessionRead {
+  readonly sessionId: string
+  readonly epoch: object
+  readonly signal: AbortSignal
+  readonly expiresAt: string
+}
 export interface EnterpriseHostBusinessCapabilities {
   currentAuthority(signal: AbortSignal): Promise<CurrentAuthoritySnapshot>
   localState(): { readonly project: EnterpriseProject; readonly authority: 'current' | 'offline'; readonly lastSyncAt: string }
@@ -11,6 +18,7 @@ export interface EnterpriseHostBusinessCapabilities {
   releaseRunAdmission(runId: string): void
   prepareSessionBinding(runId: string, sessionId: string, signal: AbortSignal): Promise<EnterpriseSessionBindingLease>
   sessionRun(sessionId: string, signal: AbortSignal): Promise<RunAuthorization>
+  ownedSessionRead(sessionId: string, signal: AbortSignal): Promise<EnterpriseOwnedSessionRead>
   readPinnedSnapshot(sessionId: string, ref: Pick<SourceRef, 'materialId' | 'revisionId'>, signal: AbortSignal): Promise<SourceRef & { readonly text: string }>
   prepareDraft(sessionId: string, content: string, refs: readonly SourceRef[], signal: AbortSignal): Promise<{ readonly text: string; readonly sources: readonly SourceRef[]; readonly status: 'local-draft' }>
   modelBytes(sessionId: string, request: unknown, signal: AbortSignal): AsyncIterable<Uint8Array>
@@ -289,7 +297,15 @@ export class EnterpriseMainSession {
       // This owner must publish its process handle before awaiting readiness.
       // Serialize completion/cleanup before a switch can start another Host.
       try { await this.host.start(this.recovery.layout, authority, combined, this.hostBusiness(generation)); this.current(generation) }
-      catch (error) { await this.stopHost(); throw error }
+      catch (error) {
+        // A failed start may already have captured private Main read grants.
+        // Revoke them before awaiting disposal of the partially created Host.
+        if (generation === this.generation) {
+          ++this.hostGeneration
+          this.execution.abort(new EnterpriseMainError('enterprise/host-start-failed'))
+        }
+        await this.stopHost(); throw error
+      }
     })
   }
   async materials(signal?: AbortSignal) {
@@ -355,6 +371,8 @@ export class EnterpriseMainSession {
   /** A captured account lifetime; Main never exports OAuth or a caller-selected endpoint. */
   private hostBusiness(generation: number): EnterpriseHostBusinessCapabilities {
     const hostGeneration = this.hostGeneration
+    const readEpoch = Object.freeze({})
+    const readSignal = AbortSignal.any([this.lifetime.signal, this.execution.signal])
     const active = () => { this.current(generation); if (hostGeneration !== this.hostGeneration) fail('host-changed'); if (!this.ready || !this.recovery || !this.selectedProject) fail('select-project-required') }
     const activeEnterprise = () => { active(); this.enterprise() }
     const ownDraft = (draftId: string): DraftRecord => {
@@ -415,6 +433,22 @@ export class EnterpriseMainSession {
         })
       },
       sessionRun,
+      ownedSessionRead: async (sessionId: string, signal: AbortSignal) => {
+        activeEnterprise()
+        if (!bounded(sessionId)) fail('draft-session-not-owned')
+        const combined = AbortSignal.any([signal, readSignal])
+        combined.throwIfAborted()
+        const authority = await this.currentAuthority(combined)
+        activeEnterprise(); combined.throwIfAborted()
+        const draftId = this.sessionDrafts.get(sessionId)
+        if (!draftId) fail('draft-session-not-owned')
+        const draft = ownDraft(draftId)
+        if (draft.sessionId !== sessionId || !sameBinding(draft.run.binding, authority.binding)
+          || draft.run.projectId !== authority.project.id || Date.parse(authority.expiresAt) <= Date.now()) fail('draft-session-not-owned')
+        // Original execution publication may already have been disposed on idle.
+        // The current Main map, account/project and fresh read grant own history.
+        return Object.freeze({ sessionId, epoch: readEpoch, signal: readSignal, expiresAt: authority.expiresAt })
+      },
       readPinnedSnapshot: async (sessionId: string, ref: Pick<SourceRef, 'materialId' | 'revisionId'>, signal: AbortSignal) => {
         const run = await sessionRun(sessionId, signal)
         const pin = run.inputRefs.find(item => item.materialId === ref.materialId && item.revisionId === ref.revisionId)

@@ -68,16 +68,24 @@ remains separate.
 From `workdsh-web`, build the contracts and this package, then run its `test` and
 `typecheck` scripts. From the independent `enterprise/plugin-agent-bridge`
 workspace, `corepack pnpm test:profile` builds the Profile's workspace prerequisites
-and runs fifteen real official-runtime integration cases using fixture identity,
+and runs eighteen real official-runtime integration cases using fixture identity,
 ACL persistence and model replies. These cover actual tool turns, durable draft
 and hash confirmation, authenticated HTTP and physical WS refusal, cancellation,
 current Run policy, revocation at model dispatch, failed admission, repeated boot,
 escaped-content size, offline editing/reopening, sticky Main admission before
 Runtime refresh, malformed responses/body IO, and late original render/stream
-cutoff and known refresh-token denial and concurrent denial/offline abort. Fixture/Linux evidence is not target desktop acceptance.
+cutoff, known refresh-token denial and concurrent denial/offline abort, Main-owned
+history admission after execution completes, and failed Host start revocation.
+Fixture/Linux evidence is not target desktop acceptance.
 DSH remains pinned. Consumer Cordis4.0.4 now satisfies the published ~4.0.4
 peers and is verified with original Core and existing consumers. This Linux
 source evidence does not replace packaged Windows/macOS compatibility.
+
+Main now privately supplies `ownedSessionRead` with a fresh current-project grant,
+stable Host epoch and cutoff signal, and the server expiry. The mapped draft and
+account binding own this read; a completed or expired execution Run does not.
+Failed Host startup revokes captured grants before waiting for disposal. This
+capability alone does not mount native Conversation or authorize desktop activation.
 
 Supporting tasks: D01/D04/D05/D07/D08/D09/D10. Formal AT-03/07/08/10/11/13–18/20/
 22–23/31/33–47 are not promoted by these headless checks. Native sandbox,

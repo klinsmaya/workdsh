@@ -33,6 +33,50 @@ async function composed(options={}){
   return {...f,ctx:()=>ctx,profileRoot:()=>profileRoot,requests,modelCalls:()=>modelCalls,invoke};
 }
 
+test('AFOS-CHECK-P16 Main fresh owned history grant survives completed execution publication without restoring a Run',async()=>{
+  const f=await composed();try{
+    const started=await f.invoke('start',{sources:[f.ref],goal:'Generate history for a current owned draft.',operationId:'owned-native-history'});
+    assert.equal(started.ok,true,JSON.stringify(started));const sessionId=started.value.sessionId;
+    await f.ctx().agents.get(sessionId).whenIdle();await new Promise(resolve=>setImmediate(resolve));
+    const business=f.business();await assert.rejects(business.sessionRun(sessionId,new AbortController().signal),/session-run-unowned/);
+    const before=f.calls.length,first=await business.ownedSessionRead(sessionId,new AbortController().signal);
+    assert.equal(first.sessionId,sessionId);assert.equal(first.signal.aborted,false);assert.ok(Date.parse(first.expiresAt)>Date.now());assert.equal(Object.isFrozen(first),true);
+    assert.deepEqual(f.calls.slice(before),['identity.current']);
+    const second=await business.ownedSessionRead(sessionId,new AbortController().signal);
+    assert.equal(first.epoch,second.epoch);assert.equal(first.signal,second.signal);
+    await assert.rejects(business.ownedSessionRead('foreign-session',new AbortController().signal),/draft-session-not-owned/);
+    const cancelled=new AbortController();cancelled.abort();await assert.rejects(business.ownedSessionRead(sessionId,cancelled.signal));assert.equal(first.signal.aborted,false);
+    f.disconnect();await assert.rejects(business.ownedSessionRead(sessionId,new AbortController().signal));assert.equal(first.signal.aborted,true);
+    f.reconnect();await assert.rejects(business.ownedSessionRead(sessionId,new AbortController().signal),/offline-restart-required/);
+    await f.main.startHost();await assert.rejects(business.ownedSessionRead(sessionId,new AbortController().signal),/host-changed/);
+  }finally{await f.cleanup();}
+});
+
+test('AFOS-CHECK-P17 current server revoke cuts off previously issued Main owned history grant',async()=>{
+  const f=await composed();try{
+    const started=await f.invoke('start',{sources:[f.ref],goal:'Generate owned history before revocation.',operationId:'owned-native-revoke'});
+    assert.equal(started.ok,true,JSON.stringify(started));const sessionId=started.value.sessionId;
+    await f.ctx().agents.get(sessionId).whenIdle();await new Promise(resolve=>setImmediate(resolve));
+    const business=f.business(),read=await business.ownedSessionRead(sessionId,new AbortController().signal);
+    f.revoke();await assert.rejects(business.ownedSessionRead(sessionId,new AbortController().signal));assert.equal(read.signal.aborted,true);
+    await assert.rejects(business.ownedSessionRead(sessionId,new AbortController().signal),/account-changed/);
+  }finally{await f.cleanup();}
+});
+
+test('AFOS-CHECK-P18 failed Host start synchronously revokes private history grant and callbacks',async()=>{
+  const f=await composed();try{
+    const started=await f.invoke('start',{sources:[f.ref],goal:'Generate owned history before failed restart.',operationId:'owned-native-failed-host'});
+    assert.equal(started.ok,true,JSON.stringify(started));const sessionId=started.value.sessionId;
+    await f.ctx().agents.get(sessionId).whenIdle();await new Promise(resolve=>setImmediate(resolve));
+    const before=await f.business().ownedSessionRead(sessionId,new AbortController().signal);let failedBusiness,failedRead;
+    f.startHook(async(_signal,_layout,_authority,business)=>{failedBusiness=business;failedRead=await business.ownedSessionRead(sessionId,new AbortController().signal);throw new Error('fixture Host startup failed');});
+    await assert.rejects(f.main.startHost(),/fixture Host startup failed/);
+    assert.equal(before.signal.aborted,true);assert.ok(failedRead);assert.equal(failedRead.signal.aborted,true);
+    await assert.rejects(failedBusiness.ownedSessionRead(sessionId,new AbortController().signal),/host-changed/);
+    assert.throws(()=>failedBusiness.drafts(),/host-changed/);
+  }finally{await f.cleanup();}
+});
+
 test('AFOS-CHECK-P01 real Loader and official tool loop produce durable draft, human edit and receipt',async()=>{
   const f=await composed();try{
     const state=await f.invoke('state');assert.equal(state.ok,true);assert.equal(state.value.drafts.length,0);
