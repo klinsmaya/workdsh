@@ -1,0 +1,28 @@
+{
+  "task": "/root/afos_foundation_test",
+  "mode": "independent read-only source review and test",
+  "command": "node --test tests/*.test.mjs",
+  "cwd": "/workspace/afos-native/enterprise/native-sandbox-adapter",
+  "exitCode": 0,
+  "tests": {
+    "passed": 18,
+    "failed": 0,
+    "skipped": 0
+  },
+  "status": "APPROVED_FOR_INACTIVE_FOUNDATION_INTEGRATION",
+  "fixedFindings": [
+    "abort occurring during policy compilation is replayed before preparation",
+    "dispose waits for invocation completion and common cleanup ownership",
+    "Worker request IDs and operation queue reject late reply confusion",
+    "failed preparation retains owned manager cleanup lease",
+    "cross-run runtime read regions cannot expose live input/workspace/tmp",
+    "cancel/deadline reaches bounded range cleanup when direct outcome never settles",
+    "synchronous spawn cancellation still installs a handler for late outcome rejection"
+  ],
+  "limits": [
+    "Injected full backend is only an offline fixture; production backend never declares full",
+    "Public SRT reset completion does not independently prove native helper exits",
+    "Real every-path secret, filesystem, network, IPC and target desktop enforcement remain NOT_RUN/BLOCKED"
+  ],
+  "writes": "NONE; no source/build/install/native business execution by reviewer"
+}

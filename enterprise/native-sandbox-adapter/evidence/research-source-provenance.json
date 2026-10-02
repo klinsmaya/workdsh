@@ -1,0 +1,44 @@
+[
+  {
+    "repository": "anthropics/sandbox-runtime",
+    "ref": "117eb928202b53c80d3cb6527d88d1b90e4ca7a9",
+    "path": "README.md",
+    "sha256": "82b4b4c6169479909ac15df2943216aa3398cbc90f080469f9d6dc84ee7b4a76",
+    "url": "https://github.com/anthropics/sandbox-runtime/blob/117eb928202b53c80d3cb6527d88d1b90e4ca7a9/README.md"
+  },
+  {
+    "repository": "anthropics/sandbox-runtime",
+    "ref": "117eb928202b53c80d3cb6527d88d1b90e4ca7a9",
+    "path": "package.json",
+    "sha256": "37d91de219797ec3cdfd8be03f285420da368cbfdda826c25413230684ba88ac",
+    "url": "https://github.com/anthropics/sandbox-runtime/blob/117eb928202b53c80d3cb6527d88d1b90e4ca7a9/package.json"
+  },
+  {
+    "repository": "anthropics/sandbox-runtime",
+    "ref": "117eb928202b53c80d3cb6527d88d1b90e4ca7a9",
+    "path": "src/index.ts",
+    "sha256": "be9212b70b55e458f009bb35197a179b4b62d70aa8fc1553c9497b2b781b2c53",
+    "url": "https://github.com/anthropics/sandbox-runtime/blob/117eb928202b53c80d3cb6527d88d1b90e4ca7a9/src/index.ts"
+  },
+  {
+    "repository": "anthropics/sandbox-runtime",
+    "ref": "117eb928202b53c80d3cb6527d88d1b90e4ca7a9",
+    "path": "src/sandbox/sandbox-manager.ts",
+    "sha256": "a9c5dd5f6e1311a28cac318736229ab0feb681a0edd3951d6e2069d5023225c7",
+    "url": "https://github.com/anthropics/sandbox-runtime/blob/117eb928202b53c80d3cb6527d88d1b90e4ca7a9/src/sandbox/sandbox-manager.ts"
+  },
+  {
+    "repository": "anthropics/sandbox-runtime",
+    "ref": "117eb928202b53c80d3cb6527d88d1b90e4ca7a9",
+    "path": "src/sandbox/sandbox-config.ts",
+    "sha256": "497327f77b0c5dccd14cd2d2b1d4d87d30d19435ccca7c43be48e8673e3ace98",
+    "url": "https://github.com/anthropics/sandbox-runtime/blob/117eb928202b53c80d3cb6527d88d1b90e4ca7a9/src/sandbox/sandbox-config.ts"
+  },
+  {
+    "repository": "anthropics/sandbox-runtime",
+    "ref": "117eb928202b53c80d3cb6527d88d1b90e4ca7a9",
+    "path": "src/sandbox/linux-sandbox-utils.ts",
+    "sha256": "98a06355737620dcb4f8b9ba464cce8ddd1ae681d9842d3338fe83022799c096",
+    "url": "https://github.com/anthropics/sandbox-runtime/blob/117eb928202b53c80d3cb6527d88d1b90e4ca7a9/src/sandbox/linux-sandbox-utils.ts"
+  }
+]

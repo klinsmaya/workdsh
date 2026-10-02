@@ -1,0 +1,24 @@
+{
+  "name": "workdsh-provider-identity-nocobase",
+  "version": "0.1.0-alpha.1",
+  "private": true,
+  "type": "module",
+  "description": "Maps a single NocoBase enterprise identity to the existing WorkDSH Host services.",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+    "./authority": { "types": "./dist/authority.d.ts", "default": "./dist/authority.js" },
+    "./package.json": "./package.json"
+  },
+  "files": ["dist", "README.md", "README.zh-CN.md", "README.i18n.yaml"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "peerDependencies": { "@deepseek-ai/cordis": "4.0.3" },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.3",
+    "@types/node": "22.19.0",
+    "workdsh-contracts": "workspace:*"
+  }
+}

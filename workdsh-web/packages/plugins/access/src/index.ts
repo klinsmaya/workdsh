@@ -24,6 +24,7 @@ import type {
   AuthorizationDecision,
   AuthorizationRequest,
   IdentityService,
+  EnterpriseIdentityService as EnterpriseAuthorityIdentity,
   ResourceOwner,
   ResourceRef,
   RuntimeBinding,
@@ -105,14 +106,39 @@ function authorizationRevision(membershipRevision: string | undefined, grants: r
   return hash.digest('hex');
 }
 
+function requireEnterpriseAuthority(identity: IdentityService): EnterpriseAuthorityIdentity {
+  const authority = identity as Partial<EnterpriseAuthorityIdentity>;
+  if (authority.enterprise !== true || typeof authority.assertCurrentActor !== 'function'
+    || typeof authority.actorSignal !== 'function' || typeof authority.authorizeEnterprise !== 'function' || typeof authority.authorizeSessionBinding !== 'function') {
+    throw new GovernanceContractError('access/enterprise-authority-required', 'Enterprise current authority is required.');
+  }
+  return authority as EnterpriseAuthorityIdentity;
+}
+
+export interface AccessManagerConfig {
+  /** Explicit non-default integration only; raw ingress must be closed before activation. */
+  readonly enterprise?: boolean;
+}
+
 export class AccessManager extends Service implements AccessService, RuntimeBindingService {
   static inject = ['storageDomain', 'workdshIdentity', 'workdshAudit'];
   private grants?: KvTable<string, AccessGrant>;
   private sessionOwners?: KvTable<string, SessionOwnerBinding>;
   private mutationTail: Promise<void> = Promise.resolve();
+  readonly enterprise: boolean;
 
-  constructor(ctx: Context) {
+  constructor(ctx: Context, config: AccessManagerConfig = {}) {
     super(ctx, 'workdshAccess');
+    this.enterprise = config.enterprise === true;
+    if (this.enterprise) requireEnterpriseAuthority(ctx.workdshIdentity);
+    else if ((ctx.workdshIdentity as Partial<EnterpriseAuthorityIdentity>).enterprise === true) {
+      throw new GovernanceContractError('access/enterprise-mode-required', 'Enterprise identity requires explicit enterprise Access.');
+    }
+  }
+
+  /** Called again after asynchronous policy/audit work, immediately before a controlled side effect. */
+  assertCurrentActor(actor: ActorContext): void {
+    if (this.enterprise) requireEnterpriseAuthority(this.ctx.workdshIdentity).assertCurrentActor(actor);
   }
 
   async [Service.init](): Promise<void> {
@@ -133,6 +159,8 @@ export class AccessManager extends Service implements AccessService, RuntimeBind
       signal?.throwIfAborted();
       assertActorContext(actor);
       validateRuntimeRequest({ ...request, runtimeId: 'binding', isolation: 'local-trusted' });
+      if (this.enterprise) await requireEnterpriseAuthority(this.ctx.workdshIdentity).authorizeSessionBinding(actor, request, signal);
+      this.assertCurrentActor(actor);
       const membership = this.ctx.workdshIdentity.membership(actor.organizationId, actor.principalId);
       if (!membership || membership.state !== 'active') {
         throw new GovernanceContractError('access/inactive-membership', 'Session owner is not an active member.');
@@ -157,6 +185,8 @@ export class AccessManager extends Service implements AccessService, RuntimeBind
       const target = sessionResource(request.sessionId);
       const operationId = randomUUID();
       await this.audit(actor, 'access.session-bind', target, 'unknown', 'access/session-bind-started', { operationId });
+      signal?.throwIfAborted();
+      this.assertCurrentActor(actor);
       await sessions.put(request.sessionId, binding);
       await this.audit(actor, 'access.session-bind', target, 'succeeded', 'access/session-bind-succeeded', {
         operationId,
@@ -217,6 +247,15 @@ export class AccessManager extends Service implements AccessService, RuntimeBind
     assertActorContext(request.actor);
     assertResourceOwner(request.owner);
     validateResource(request.resource);
+    if (this.enterprise) {
+      const decision = await requireEnterpriseAuthority(this.ctx.workdshIdentity).authorizeEnterprise(request, signal);
+      await this.audit(request.actor, 'access.authorize', request.resource,
+        decision.effect === 'allow' ? 'succeeded' : 'denied', decision.code,
+        { requestedAction: request.action, authorizationRevision: decision.authorizationRevision });
+      signal?.throwIfAborted();
+      this.assertCurrentActor(request.actor);
+      return decision;
+    }
     const grants = [...this.requireGrants().entries()]
       .map(([, grant]) => grant)
       .filter((grant) => grant.organizationId === request.owner.organizationId
@@ -251,6 +290,7 @@ export class AccessManager extends Service implements AccessService, RuntimeBind
   ): Promise<void> {
     return this.enqueueMutation(async () => {
       signal?.throwIfAborted();
+      if (this.enterprise) throw new GovernanceContractError('access/enterprise-grants-server-owned', 'Enterprise grants are managed by NocoBase.');
       validateGrant(grant);
       const management = await this.authorize({ actor, action: 'manage', resource: grant.resource, owner }, signal);
       if (management.effect !== 'allow') throw new GovernanceContractError('access/denied', management.code);
@@ -282,6 +322,7 @@ export class AccessManager extends Service implements AccessService, RuntimeBind
   ): Promise<boolean> {
     return this.enqueueMutation(async () => {
       signal?.throwIfAborted();
+      if (this.enterprise) throw new GovernanceContractError('access/enterprise-grants-server-owned', 'Enterprise grants are managed by NocoBase.');
       const grants = this.requireGrants();
       const current = grants.get(grantId);
       if (!current) return false;
@@ -406,7 +447,7 @@ export class SessionAccessBridge extends Service {
     signal?.throwIfAborted();
     const sessionId = request.sessionId ?? (`session-${randomUUID()}` as SessionId);
     const actor = await this.ctx.workdshIdentity.resolve({ sessionId: String(sessionId) }, signal);
-    if (request.sessionId !== undefined && !this.ctx.workdshAccess.sessionOwner(String(sessionId))) {
+    if (request.sessionId !== undefined && (this.ctx.workdshAccess.enterprise || !this.ctx.workdshAccess.sessionOwner(String(sessionId)))) {
       let exists = false;
       try {
         await this.ctx.sessionController.inspect(sessionId, signal);
@@ -428,6 +469,7 @@ export class SessionAccessBridge extends Service {
     }, signal);
     signal?.throwIfAborted();
     try {
+      this.ctx.workdshAccess.assertCurrentActor(actor);
       const result = await this.ctx.sessionController.create({ ...request, sessionId });
       if (String(result.sessionId) !== String(sessionId)) {
         throw new GovernanceContractError('access/session-id-mismatch', 'Session Controller returned a different Session identity.');
@@ -453,6 +495,7 @@ export class SessionAccessBridge extends Service {
     }, signal);
     signal?.throwIfAborted();
     try {
+      this.ctx.workdshAccess.assertCurrentActor(actor);
       const result = await this.ctx.sessionController.resolveAgent(sessionId);
       if ('error' in result) {
         await this.audit(actor, 'session.resume', 'failed', errorCode(result.error, 'session/resume-failed'));
@@ -506,7 +549,30 @@ export class ToolAccessBridge extends Service {
     super(ctx, 'workdshToolAccess');
     this.runtimeId = config.runtimeId ?? `workdsh-runtime-${randomUUID()}`;
     this.isolation = config.isolation ?? 'local-trusted';
-    this.autoBindPersonalSessions = config.autoBindPersonalSessions ?? true;
+    this.autoBindPersonalSessions = config.autoBindPersonalSessions ?? !ctx.workdshAccess.enterprise;
+    if (ctx.workdshAccess.enterprise && this.autoBindPersonalSessions) {
+      throw new GovernanceContractError('access/enterprise-auto-bind-forbidden', 'Enterprise Sessions require trusted creation.');
+    }
+    if (ctx.workdshAccess.enterprise) ctx.tools.guard((exec) => {
+      if (!exec.agent) return 'WorkDSH denied this tool call (access/enterprise-agent-required).';
+      const state = this.authorized.get(exec.token);
+      if (!state || state.binding.sessionId !== String(exec.agent.id)) return 'WorkDSH denied this tool call (access/enterprise-tool-unchecked).';
+      try { this.ctx.workdshAccess.assertCurrentActor(state.actor); }
+      catch { return 'WorkDSH denied this tool call (access/enterprise-tool-stale).'; }
+      return undefined;
+    });
+    if (ctx.workdshAccess.enterprise) ctx.on('tools/execute', async (exec, next) => {
+      const state = this.authorized.get(exec.token);
+      if (!exec.agent || !state) throw new GovernanceContractError('access/enterprise-tool-unchecked', 'Enterprise tool call was not checked.');
+      const originalSignal = exec.signal;
+      const authority = requireEnterpriseAuthority(this.ctx.workdshIdentity);
+      this.ctx.workdshAccess.assertCurrentActor(state.actor);
+      // All approved Host around wrappers must preserve this signal; raw caller ingress
+      // must also fuse authority cancellation before dispatch for a full monotonic boundary.
+      exec.signal = AbortSignal.any([originalSignal, authority.actorSignal(state.actor)]);
+      try { return await next(); }
+      finally { exec.signal = originalSignal; }
+    });
     ctx.on('tools/pre-execute', async (exec, next) => this.authorizeTool(exec, next));
     ctx.on('tools/result', (exec, result) => {
       this.observeResult(exec, result);
@@ -522,7 +588,9 @@ export class ToolAccessBridge extends Service {
   }
 
   private async authorizeTool(exec: ToolExecution, next: () => Promise<PreToolDecision>): Promise<PreToolDecision> {
-    if (!exec.agent) return next();
+    if (!exec.agent) return this.ctx.workdshAccess.enterprise
+      ? { kind: 'deny', reason: 'WorkDSH denied this tool call (access/enterprise-agent-required).' }
+      : next();
     const sessionId = String(exec.agent.id);
     let actor: ActorContext | undefined;
     try {

@@ -1287,6 +1287,18 @@ importers:
         specifier: workspace:*
         version: link:../../contracts
 
+  packages/providers/identity-nocobase:
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: 4.0.3
+        version: 4.0.3(@deepseek-ai/cordis-plugin-include@1.0.9)(@deepseek-ai/cordis-plugin-loader@1.0.5)
+      '@types/node':
+        specifier: 22.19.0
+        version: 22.19.0
+      workdsh-contracts:
+        specifier: workspace:*
+        version: link:../../contracts
+
   packages/ui:
     devDependencies:
       '@deepseek-ai/dsh-client-ui-primitives':
