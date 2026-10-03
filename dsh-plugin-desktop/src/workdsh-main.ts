@@ -23,7 +23,7 @@ import type { EnterpriseMainSession } from './enterprise-main.ts'
 import type { EnterpriseProject } from './enterprise-broker.ts'
 import { createEnterpriseElectronHost, runtimeDraftProjection, enterpriseRuntimePaths } from './enterprise-electron.ts'
 import type { installLocalDraftIpc } from './enterprise-local-ipc.ts'
-import { createEnterpriseLocalWindow } from './enterprise-window.ts'
+import { createEnterpriseWindowOwner } from './enterprise-window.ts'
 
 const PROFILE_NAME = 'workdsh'
 const READY_PATTERN = /dsh web:\s+(http:\/\/127\.0\.0\.1:\d+\/?\?token=[^\s]+)/u
@@ -242,7 +242,7 @@ async function stopRuntime(): Promise<void> {
 
 /** Native account owner and its finite local draft face; Host activation remains refused. */
 function installEnterpriseEntry(): boolean {
-  let onlineOwner: ReturnType<typeof createEnterpriseLocalWindow>['online'] | undefined
+  let enterpriseWindows: ReturnType<typeof createEnterpriseWindowOwner> | undefined
   const enterprisePaths = enterpriseRuntimePaths(app.getAppPath(), process.resourcesPath, app.isPackaged)
   enterpriseSession = createEnterpriseEntry({
     configPath: join(app.getAppPath(), 'afos-desktop-config.json'),
@@ -250,14 +250,16 @@ function installEnterpriseEntry(): boolean {
     storage: safeStorage,
     openBrowser: async url => { await shell.openExternal(url) },
     host: config => createEnterpriseElectronHost({ appPath: app.getAppPath(), ...enterprisePaths, config,
-      callerIssuer: { assertRequest: (request, signal) => { if (!onlineOwner) throw new Error('enterprise/online-carrier-refused'); return onlineOwner.callerIssuer.assertRequest(request, signal) } },
+      callerIssuer: { assertRequest: (request, signal) => { const onlineOwner = enterpriseWindows?.current()?.online; if (!onlineOwner) throw new Error('enterprise/online-carrier-refused'); return onlineOwner.callerIssuer.assertRequest(request, signal) } },
       online: { frontendIndex: join(app.getAppPath(), 'renderer', 'afos-online', 'index.html'), onReady: async ready => {
         const accountSignal = enterpriseSession?.localDraftCapabilities().accountSignal
+        const onlineOwner = enterpriseWindows?.current()?.online
         if (!onlineOwner || !accountSignal) throw new Error('enterprise/online-carrier-refused')
         await onlineOwner.showOnline(ready, accountSignal)
       } },
       writeLog: text => process.stderr.write(redactRuntimeLog(text)),
       onUnexpectedStop: async () => {
+        enterpriseWindows?.cancelStart()
         const stopping = enterpriseSession?.stopEnterprise()
         localDraftOwner?.changed(); try { await stopping } finally { localDraftOwner?.changed() }
       },
@@ -276,23 +278,25 @@ function installEnterpriseEntry(): boolean {
   }
   const refreshMenu = (): void => {
     const account: MenuItemConstructorOptions[] = [
-      { label: 'Sign in / 登录', click: () => { void report(async () => { projects = []; refreshMenu(); projects = await session.signIn(); refreshMenu() }, 'Select an allowed project from the account menu. / 请在账号菜单选择已授权项目。') } },
-      { label: 'Projects / 项目', submenu: projects.map(project => ({ label: project.name.replaceAll('&', '').slice(0, 80), click: () => { void report(() => session.selectProject(project.id), 'Account and project verified. / 账号与项目已核实。') } })) },
-      { label: 'Start enterprise Host / 启动企业 Host', click: () => { void report(() => session.startHost(), 'Enterprise Host started. / 企业 Host 已启动。') } },
-      { label: 'Stop enterprise Host / 停止企业 Host', click: () => { void report(() => localSession.stopEnterprise(), 'Enterprise Host stopped. Local drafts remain available. / 企业 Host 已停稳，本地草稿保留。') } },
-      { label: 'Sign out / 退出账号', click: () => { void report(async () => { projects = []; refreshMenu(); await session.logout() }, 'Signed out. Drafts are preserved. / 已退出账号，草稿保留。') } },
+      { label: 'Sign in / 登录', click: () => { enterpriseWindows?.cancelStart(); void report(async () => { projects = []; refreshMenu(); projects = await session.signIn(); refreshMenu() }, 'Select an allowed project from the account menu. / 请在账号菜单选择已授权项目。') } },
+      { label: 'Projects / 项目', submenu: projects.map(project => ({ label: project.name.replaceAll('&', '').slice(0, 80), click: () => { enterpriseWindows?.cancelStart(); void report(() => session.selectProject(project.id), 'Account and project verified. / 账号与项目已核实。') } })) },
+      { label: 'Start enterprise Host / 启动企业 Host', click: () => { void report(async () => { if (!enterpriseWindows) throw new Error('enterprise/window-owner-refused'); await enterpriseWindows.startHost() }, 'Enterprise Host started. / 企业 Host 已启动。') } },
+      { label: 'Stop enterprise Host / 停止企业 Host', click: () => { void report(() => enterpriseWindows ? enterpriseWindows.stopHost() : localSession.stopEnterprise(), 'Enterprise Host stopped. Local drafts remain available. / 企业 Host 已停稳，本地草稿保留。') } },
+      { label: 'Sign out / 退出账号', click: () => { enterpriseWindows?.cancelStart(); void report(async () => { projects = []; refreshMenu(); await session.logout() }, 'Signed out. Drafts are preserved. / 已退出账号，草稿保留。') } },
       { role: 'quit' },
     ]
     Menu.setApplicationMenu(Menu.buildFromTemplate([{ label: 'AFOS', submenu: account }]))
   }
   refreshMenu()
-  const local = createEnterpriseLocalWindow({ createWindow: options => new BrowserWindow(options), ipc: ipcMain, appPath: app.getAppPath(),
+  enterpriseWindows = createEnterpriseWindowOwner({ createWindow: options => new BrowserWindow(options), ipc: ipcMain, appPath: app.getAppPath(),
     capabilities: () => localSession.localDraftCapabilities(), projectDraft: runtimeDraftProjection(enterprisePaths.runtimeProfile),
-    closed: () => { onlineOwner = undefined; localDraftOwner = undefined; window = undefined; void enterpriseSession?.stopEnterprise().catch(() => process.stderr.write('AFOS window cleanup failed\n')) },
-    loadFailed: () => { process.stderr.write('AFOS local drafts window failed\n'); app.quit() },
+    activated: face => { window = face.window; localDraftOwner = face.owner },
+    closed: () => { localDraftOwner = undefined; window = undefined },
+    startHost: () => session.startHost(), stopHost: () => session.stopEnterprise(),
+    loadFailed: () => { process.stderr.write('AFOS local drafts window failed\n') },
+    cleanupFailed: () => { process.stderr.write('AFOS window cleanup failed\n') },
   })
-  window = local.window; localDraftOwner = local.owner; onlineOwner = local.online
-  powerMonitor.on('suspend', () => { void session.suspend().then(() => localDraftOwner?.changed()).catch(() => { localDraftOwner?.changed(); process.stderr.write('AFOS suspend cleanup failed\n') }) })
+  powerMonitor.on('suspend', () => { enterpriseWindows?.cancelStart(); void session.suspend().then(() => localDraftOwner?.changed()).catch(() => { localDraftOwner?.changed(); process.stderr.write('AFOS suspend cleanup failed\n') }) })
   return true
 }
 
