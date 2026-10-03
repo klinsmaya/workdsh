@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fork } from 'node:child_process';
+import { fork, spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline';
 import { once } from 'node:events';
 import { fixture } from './desktop-fixture.mjs';
@@ -58,7 +59,14 @@ test('lost real Main publication ACK stays unknown with no tool/model work and r
  const runId=[...f.tables.runs.keys()][0];await assert.rejects(f.business().sessionRun('not-published',new AbortController().signal));const admitted=await f.business().authorize([f.ref],'ipc-after-lost-ack',new AbortController().signal);assert.notEqual(admitted.runId,runId);f.business().releaseRunAdmission(admitted.runId);assert.equal(f.tables.artifacts.size,0);
 });
 test('failed real child Core startup cuts off new and prior generations and permits independent later start',{timeout:20000},async t=>{
+ // This regression must exercise GC even when the enclosing suite omits the flag.
+ if(typeof global.gc!=='function'){
+  const env={...process.env};delete env.NODE_TEST_CONTEXT;
+  const result=spawnSync(process.execPath,['--expose-gc','--experimental-transform-types','--test','--test-name-pattern=^failed real child Core startup',fileURLToPath(import.meta.url)],{env,encoding:'utf8',timeout:20000,maxBuffer:1024*1024});
+  assert.equal(result.error,undefined);assert.equal(result.signal,null);assert.equal(result.status,0,result.stdout+'\n'+result.stderr);assert.ok(result.stdout.includes('AFOS_MAIN_GC_REGRESSION completed'),result.stdout+'\n'+result.stderr);return;
+ }
  const f=await composed(t);const old=f.business();let failed;
- f.startHook(async(...args)=>{failed=args[3];await f.bootHost(...args);throw new Error('fixture-child-start-failed');});await assert.rejects(f.main.startHost(),/fixture-child-start-failed/);assert.equal(old.hostSignal.aborted,true);assert.equal(failed.hostSignal.aborted,true);assert.throws(()=>failed.drafts(),/host-changed/);
+ f.startHook(async(...args)=>{failed=args[3];await f.bootHost(...args);for(let n=0;n<8;n++){await new Promise(resolve=>setImmediate(resolve));global.gc();}throw new Error('fixture-child-start-failed');});await assert.rejects(f.main.startHost(),/fixture-child-start-failed/);assert.equal(old.hostSignal.aborted,true);assert.equal(failed.hostSignal.aborted,true);assert.throws(()=>failed.drafts(),/host-changed/);
  f.startHook(f.bootHost);await f.main.startHost();const next=await f.invoke('start',{sources:[f.ref],goal:'New child after failed predecessor.',operationId:'ipc-after-failed-start'});assert.equal(next.ok,true,JSON.stringify(next));await f.command('idle',{sessionId:next.value.sessionId});assert.equal(f.tables.artifacts.size,0);assert.ok(new Set(f.wire.filter(v=>v.kind==='welcome').map(v=>v.generation)).size>=3);
+ console.log('AFOS_MAIN_GC_REGRESSION completed');
 });

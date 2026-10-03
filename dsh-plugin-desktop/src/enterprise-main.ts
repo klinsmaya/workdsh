@@ -374,7 +374,9 @@ export class EnterpriseMainSession {
   private hostBusiness(generation: number): EnterpriseHostBusinessCapabilities {
     const hostGeneration = this.hostGeneration
     const readEpoch = Object.freeze({})
-    const readSignal = AbortSignal.any([this.lifetime.signal, this.execution.signal])
+    // Every account cutoff aborts this execution before replacing it. Keep the
+    // captured signal itself so old Hosts remain aborted after source GC.
+    const readSignal = this.execution.signal
     const active = () => { this.current(generation); if (hostGeneration !== this.hostGeneration) fail('host-changed'); if (!this.ready || !this.recovery || !this.selectedProject) fail('select-project-required') }
     const activeEnterprise = () => { active(); this.enterprise() }
     const ownDraft = (draftId: string): DraftRecord => {
