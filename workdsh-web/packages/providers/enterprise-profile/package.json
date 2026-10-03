@@ -21,6 +21,14 @@
     "./assembly": {
       "types": "./dist/assembly.d.ts",
       "default": "./dist/assembly.js"
+    },
+    "./native-controller-capture": {
+      "types": "./dist/native-controller-capture.d.ts",
+      "default": "./dist/native-controller-capture.js"
+    },
+    "./native-reader-capture": {
+      "types": "./dist/native-reader-capture.d.ts",
+      "default": "./dist/native-reader-capture.js"
     }
   },
   "files": [
@@ -29,7 +37,10 @@
     "README.md",
     "README.zh-CN.md",
     "README.i18n.yaml",
-    "REUSE.md"
+    "REUSE.md",
+    "NATIVE_READ_FORWARDING.md",
+    "NATIVE_READ_FORWARDING.zh-CN.md",
+    "NATIVE_READ_FORWARDING.i18n.yaml"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -57,7 +68,21 @@
     "@deepseek-ai/dsh-storage": "0.1.7-rc.2",
     "@deepseek-ai/dsh-storage-json": "0.1.7-rc.2",
     "@deepseek-ai/dsh-storage-domain": "0.1.7-rc.2",
-    "@deepseek-ai/dsh-scope": "0.1.7-rc.2"
+    "@deepseek-ai/dsh-scope": "0.1.7-rc.2",
+    "@deepseek-ai/dsh-api-gateway": "0.1.7-rc.2",
+    "@deepseek-ai/dsh-api-session-controller": "0.1.7-rc.2",
+    "@deepseek-ai/dsh-typert-registry": "0.1.7-rc.2",
+    "@deepseek-ai/dsh-typert-protocol": "0.1.7-rc.2",
+    "@deepseek-ai/dsh-commands": "0.1.7-rc.2",
+    "@deepseek-ai/dsh-attachment-local": "0.1.7-rc.2",
+    "@deepseek-ai/dsh-fs-local": "0.1.7-rc.2",
+    "@deepseek-ai/dsh-agent-default-model": "0.1.7-rc.2",
+    "@deepseek-ai/dsh-session-query-sqlite": "0.1.7-rc.2",
+    "@deepseek-ai/dsh-workspace": "0.1.7-rc.2",
+    "@deepseek-ai/dsh-file-reference": "0.1.7-rc.2",
+    "@deepseek-ai/dsh-client-file-upload": "0.1.7-rc.2",
+    "@deepseek-ai/cordis-plugin-group": "1.0.4",
+    "workdsh-enterprise-session-view": "workspace:*"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.4",
@@ -86,7 +111,21 @@
     "workdsh-provider-identity-nocobase": "workspace:*",
     "workdsh-plugin-audit": "workspace:*",
     "workdsh-plugin-access": "workspace:*",
-    "workdsh-plugin-enterprise-drafts": "workspace:*"
+    "workdsh-plugin-enterprise-drafts": "workspace:*",
+    "@deepseek-ai/dsh-api-gateway": "0.1.7-rc.2",
+    "@deepseek-ai/dsh-api-session-controller": "0.1.7-rc.2",
+    "@deepseek-ai/dsh-typert-registry": "0.1.7-rc.2",
+    "@deepseek-ai/dsh-typert-protocol": "0.1.7-rc.2",
+    "@deepseek-ai/dsh-commands": "0.1.7-rc.2",
+    "@deepseek-ai/dsh-attachment-local": "0.1.7-rc.2",
+    "@deepseek-ai/dsh-fs-local": "0.1.7-rc.2",
+    "@deepseek-ai/dsh-agent-default-model": "0.1.7-rc.2",
+    "@deepseek-ai/dsh-session-query-sqlite": "0.1.7-rc.2",
+    "@deepseek-ai/dsh-workspace": "0.1.7-rc.2",
+    "@deepseek-ai/dsh-file-reference": "0.1.7-rc.2",
+    "@deepseek-ai/dsh-client-file-upload": "0.1.7-rc.2",
+    "@deepseek-ai/cordis-plugin-group": "1.0.4",
+    "workdsh-enterprise-session-view": "workspace:*"
   },
   "dependencies": {
     "@afos/model-adapter": "file:../../../../enterprise/model-adapter"

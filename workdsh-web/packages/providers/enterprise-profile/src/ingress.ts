@@ -7,6 +7,8 @@ import type { ActorContext, AccessService, EnterpriseIdentityService, RuntimeBin
 import { EnterpriseProfileError } from './snapshot-authority.js';
 import { assertFixedEnterpriseComposition, ENTERPRISE_TOOL_NAMES } from './profile-policy.js';
 import type {} from './authority-service.js';
+import { NATIVE_READ_ENDPOINTS } from './native-reads.js';
+import type { PeerScope } from '@deepseek-ai/dsh-typert-protocol';
 
 export interface SourceIdentity { readonly materialId: string; readonly revisionId: string; readonly sha256: string }
 export interface PinnedSnapshot extends SourceIdentity { readonly text: string }
@@ -101,6 +103,13 @@ export class EnterpriseProfileIngress extends Service {
     });
   }
   cutoff = (): void => { this.#lifetime.abort(new EnterpriseProfileError('afos/profile-cutoff')); };
+  /** Existing original carrier's stream hook; values/framing remain official. */
+  openNative = async (endpoint: string, payload: unknown, callerSignal: AbortSignal,
+    uplink: AsyncIterable<unknown>, peer?: PeerScope): Promise<AsyncIterable<unknown>> => {
+    const bridge = this.ctx.get('afosNativeReadBridge');
+    if (!bridge || !['session/follow', 'session/control'].includes(endpoint)) throw new EnterpriseProfileError('afos/native-read-denied');
+    return bridge.open(endpoint, payload, AbortSignal.any([callerSignal, this.#lifetime.signal]), uplink, peer);
+  };
   private fixedTools(agent?: Agent): boolean {
     const names = this.ctx.tools.schemas(agent).map(tool => tool.name).sort();
     return JSON.stringify(names) === JSON.stringify([...ENTERPRISE_TOOL_NAMES].sort())
@@ -176,6 +185,11 @@ export class EnterpriseProfileIngress extends Service {
     const signal = AbortSignal.any([callerSignal, this.#lifetime.signal]);
     try {
       signal.throwIfAborted();
+      if (NATIVE_READ_ENDPOINTS.includes(endpoint as typeof NATIVE_READ_ENDPOINTS[number])) {
+        const bridge = this.ctx.get('afosNativeReadBridge');
+        if (!bridge) throw new EnterpriseProfileError('afos/profile-endpoint-denied');
+        return await bridge.invoke(endpoint, payload, signal);
+      }
       if (endpoint.startsWith('afos/drafts/')) {
         const runtime = this.ctx.get('afosDraftRuntime');
         if (!runtime) throw new EnterpriseProfileError('afos/profile-desktop-integration-unverified');

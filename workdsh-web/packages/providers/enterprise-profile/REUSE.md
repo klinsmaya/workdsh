@@ -2,8 +2,9 @@
 
 - Tasks: D01/D04/D05/D07/D08/D09/D10; business delta is fixed enterprise ownership,
   pins, draft UI and admission. Formal desktop acceptance remains unpassed.
-- Pinned public packages: DSH 0.1.7-rc.2; Cordis consumer 4.0.3; pnpm10.34.5.
-  Official peers ~4.0.4 remain a compatibility gap; no private source is imported.
+- Pinned public packages: DSH 0.1.7-rc.2; Cordis consumer exact4.0.4;
+  pnpm10.34.5. The owning locked graph now meets the official peers; earlier
+  Cordis4.0.3 helper probes remain historical. No private source is imported.
 - Loader: public app-boot `boot` with exact absolute published entries, no home
   patches, JSON-only fixed rows, protected namespace, required-service checks,
   unique lifecycle-owned generated config. No second Loader or plugin framework.
@@ -29,7 +30,13 @@
 - UI: implemented independent enterprise-drafts Client uses official paired Slots,
   ModuleLoader artifact, native session open and shared controls. Full native
   Conversation/Client assembly is still a separate uncompleted engineering item.
-- Evidence: 20 admission cases and seven actual official Loader/AgentLoop cases;
+- Native reads: optional original Loader sibling Groups, original Controller,
+  Connection, Gateway, public Typert schemas/definitions and five owned reads.
+  Fresh Main grants use standard AsyncLocalStorage per invocation, preserving
+  the original codecs/streams. No private WebServer, new port or event feed.
+  Native Client/$events/WS/Electron cross-process assembly remains separate work.
+- Evidence: 20 admission cases, 18 actual official Core cases and eight native
+  backend cases with strict cancellation assertions;
   identity/server/model replies remain fixtures, not target desktop AT passes.
 - Lifecycle: official effects/events/adapter ownership; Main synchronous revoke,
   coalesced asynchronous Host exit, predecessor Host callbacks invalidated. New

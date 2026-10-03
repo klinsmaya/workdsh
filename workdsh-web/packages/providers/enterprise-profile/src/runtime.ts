@@ -14,6 +14,7 @@ import { draftView, type MainDraftRecord, type OfficialTurnEvent } from './main-
 import { EnterpriseProfileError } from './snapshot-authority.js';
 import { ENTERPRISE_TOOL_NAMES } from './profile-policy.js';
 import './authority-service.js';
+import type {} from './native-reads.js';
 
 export interface RuntimeConfig { readonly model: ModelPolicy }
 function fail(): never { throw new EnterpriseProfileError('afos/drafts-operation-denied'); }
@@ -38,6 +39,7 @@ export class EnterpriseDraftRuntime extends Service {
   #active: Agent | undefined;
   #lastSyncAt: string | undefined;
   #offline = false;
+  #nativeSessionId: string | undefined;
   constructor(ctx: Context, config: RuntimeConfig) {
     super(ctx, 'afosDraftRuntime');
     if (!config?.model || !Number.isSafeInteger(config.model.maxTokens) || config.model.maxTokens < 1) fail();
@@ -110,6 +112,11 @@ export class EnterpriseDraftRuntime extends Service {
     }, 'afosDraftRuntime.dispose');
   }
   private signal(signal?: AbortSignal): AbortSignal { return AbortSignal.any([this.#lifetime.signal, ...(signal ? [signal] : [])]); }
+  /** Fixed latest successful local start; a wire caller cannot select this value. */
+  nativeSessionId = (): string | undefined => {
+    const id = this.#nativeSessionId, handle = id ? this.#handles.get(id) : undefined;
+    return id && handle && this.ctx.agents.get(handle.agent.id) === handle.agent ? id : undefined;
+  };
   private own(draftId: string): MainDraftRecord {
     id(draftId); const result = this.ctx.afosMainBusiness.drafts().find(draft => draft.draftId === draftId);
     if (!result) fail(); return result;
@@ -141,7 +148,8 @@ export class EnterpriseDraftRuntime extends Service {
       const run = await this.ctx.afosMainBusiness.authorize(value.sources, value.operationId, signal);
       runId = run.runId;
       const sessionId = SessionId(randomUUID());
-      handle = await this.ctx.agents.create({ sessionId, meta: { agentPreset: 'afos-fixed' }, signal,
+      const native = this.ctx.get('afosNativeReadBridge');
+      handle = await this.ctx.agents.create({ sessionId, meta: { agentPreset: 'afos-fixed', ...(native ? { cwd: native.workspace } : {}) }, signal,
         agentOptions: { provider: this.#policy.provider, model: this.#policy.model, maxTokens: this.#policy.maxTokens },
         setup: async (agentCtx) => {
           await this.ctx.agentPresets.mount(agentCtx, 'afos-fixed');
@@ -168,7 +176,9 @@ export class EnterpriseDraftRuntime extends Service {
         publication.dispose(); this.#tasks.delete(task);
       });
       this.#tasks.add(task); void task.catch(() => undefined);
-      return draftView(draft);
+      const view = draftView(draft);
+      this.#nativeSessionId = String(sessionId);
+      return view;
     } catch (error) {
       if (handle) { handle.agent.cancel({ kind: 'hook', reason: 'afos-create-failed' }); await handle.dispose(); this.#handles.delete(String(handle.agent.id)); if (this.#active === handle.agent) this.#active = undefined; }
       lease?.dispose();

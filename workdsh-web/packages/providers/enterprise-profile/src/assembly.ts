@@ -10,6 +10,9 @@ import { fixedEnterpriseComposition, ENTERPRISE_HOST_PACKAGES } from './profile-
 import type { MainBusinessCapabilities } from './main-capabilities.js';
 import type { ModelPolicy } from '@afos/model-adapter';
 import './authority-service.js';
+import { EnterpriseNativeReadBridge } from './native-reads.js';
+import type { SessionController } from '@deepseek-ai/dsh-api-session-controller';
+import type { NativeAssemblyCaptures } from './native-captures.js';
 
 export interface EnterpriseAssemblyOptions {
   /** Namespace directory already protected by trusted Main, not a browser/model path. */
@@ -28,6 +31,13 @@ function managedDirectory(path: string): void {
 }
 /** Fixed original Loader tree; no default bundle, home patches, expressions or generic controllers. */
 export async function bootEnterpriseCore(options: EnterpriseAssemblyOptions): Promise<Context> {
+  return bootCore(options, false);
+}
+/** Explicit opt-in headless assembly. It does not certify or activate a desktop carrier. */
+export async function bootEnterpriseNativeReadCore(options: EnterpriseAssemblyOptions): Promise<Context> {
+  return bootCore(options, true);
+}
+async function bootCore(options: EnterpriseAssemblyOptions, nativeReads: boolean): Promise<Context> {
   options.signal.throwIfAborted(); managedDirectory(options.root);
   const storage = join(options.root, 'business-storage'), sessions = join(options.root, 'sessions');
   managedDirectory(storage); managedDirectory(sessions);
@@ -50,6 +60,42 @@ export async function bootEnterpriseCore(options: EnterpriseAssemblyOptions): Pr
     'workdsh-provider-enterprise-profile': fixedEnterpriseComposition(),
   };
   const rows = ENTERPRISE_HOST_PACKAGES.map((name, index) => ({ id: `afos-${index}`, name: require.resolve(name), ...(config[name] ? { config: config[name] } : {}) }));
+  let nativeController: SessionController | undefined, nativeReader: Context | undefined;
+  const nativeWorkspace = join(options.root, 'native-workspace');
+  const nativeCaptures: NativeAssemblyCaptures = {
+    controller(value) { if (nativeController) throw new EnterpriseProfileError('afos/native-read-denied'); nativeController = value; },
+    reader(value) { if (nativeReader) throw new EnterpriseProfileError('afos/native-read-denied'); nativeReader = value; },
+  };
+  if (nativeReads) {
+    managedDirectory(nativeWorkspace);
+    const row = (name: string, prefix: string, value?: unknown) => ({ id: prefix + '-' + name,
+      name: require.resolve(name), ...(value === undefined ? {} : { config: value }) });
+    const privateConnection = 'afos-owned-native-connection';
+    const closedWeb = 'afos-owned-native-web-absent';
+    const aliases = ['commands', 'attachments', 'fs', 'agentDefaultModel', 'sessionQuery', 'workspaceRegistry',
+      'fileReferences', 'fileUploads', 'sessionController', 'sessionFileReferences', 'sessionSkillCatalog'];
+    const nativeConfig: Record<string, unknown> = {
+      '@deepseek-ai/dsh-attachment-local': { dshHome: options.root, maxImageBytes: 65536, maxImagesPerMessage: 1, maxMessageImageBytes: 65536 },
+      '@deepseek-ai/dsh-fs-local': { cwd: nativeWorkspace },
+      '@deepseek-ai/dsh-agent-default-model': { provider: options.model.provider, model: options.model.model },
+      '@deepseek-ai/dsh-session-query-sqlite': { path: join(options.root, 'native-derived-index.db'), openAt: 'never' },
+      '@deepseek-ai/dsh-api-session-controller': { nativeOpen: false },
+    };
+    const controllerNames = ['@deepseek-ai/dsh-typert-registry', '@deepseek-ai/dsh-commands', '@deepseek-ai/dsh-attachment-local',
+      '@deepseek-ai/dsh-fs-local', '@deepseek-ai/dsh-agent-default-model', '@deepseek-ai/dsh-session-query-sqlite',
+      '@deepseek-ai/dsh-workspace', '@deepseek-ai/dsh-file-reference', '@deepseek-ai/dsh-client-file-upload', '@deepseek-ai/dsh-api-session-controller'];
+    rows.push({ id: 'afos-private-native-controller', name: require.resolve('@deepseek-ai/cordis-plugin-group'), group: true,
+      isolate: { connection: privateConnection, webServer: closedWeb, typertGateway: true, typert: true,
+        ...Object.fromEntries(aliases.map(name => [name, true])) },
+      config: [...controllerNames.map(name => row(name, 'afos-native-controller', nativeConfig[name])),
+        row('workdsh-provider-enterprise-profile/native-controller-capture', 'afos-native-controller')] } as typeof rows[number]);
+    rows.push({ id: 'afos-private-owned-native-reader', name: require.resolve('@deepseek-ai/cordis-plugin-group'), group: true,
+      isolate: { connection: privateConnection, webServer: closedWeb, typertGateway: true, typert: true,
+        llm: true, agentPresets: true, ...Object.fromEntries(aliases.map(name => [name, true])) },
+      config: [row('@deepseek-ai/dsh-client-connection', 'afos-native-reader', { maxRequestBodyBytes: 2 * 1048576, trustedHosts: [] }),
+        row('@deepseek-ai/dsh-typert-registry', 'afos-native-reader'), row('@deepseek-ai/dsh-api-gateway', 'afos-native-reader'),
+        row('workdsh-provider-enterprise-profile/native-reader-capture', 'afos-native-reader')] } as typeof rows[number]);
+  }
   const filename = join(options.root, `afos-core-${randomUUID()}.json`);
   const descriptor = openSync(filename, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0), 0o600);
   try { writeFileSync(descriptor, JSON.stringify(rows)); fsyncSync(descriptor); } finally { closeSync(descriptor); }
@@ -59,6 +105,7 @@ export async function bootEnterpriseCore(options: EnterpriseAssemblyOptions): Pr
   try {
     ctx = await boot('afos-enterprise', filename, [], root => {
       root.provide('afosMainBusiness', options.business); root.provide('afosIdentityAuthority', identity);
+      if (nativeReads) root.provide('afosNativeAssemblyCapture', nativeCaptures);
     }, import.meta.url);
     ctx.effect(() => () => { try { unlinkSync(filename); } catch { /* Already removed during a failed start. */ } }, 'afosGeneratedConfig');
     options.signal.throwIfAborted();
@@ -69,6 +116,11 @@ export async function bootEnterpriseCore(options: EnterpriseAssemblyOptions): Pr
     }
     for (const forbidden of ['typertGateway', 'fs', 'mcp', 'bash', 'ptc', 'settings', 'sessionController']) {
       if (ctx.get(forbidden) !== undefined) throw new EnterpriseProfileError('afos/profile-unapproved-service');
+    }
+    if (nativeReads) {
+      if (!nativeController || !nativeReader) throw new EnterpriseProfileError('afos/native-read-denied');
+      await ctx.plugin(EnterpriseNativeReadBridge, { controller: nativeController, reader: nativeReader, workspace: nativeWorkspace });
+      if (!ctx.get('afosNativeReadBridge')) throw new EnterpriseProfileError('afos/native-read-denied');
     }
     const cutoff = () => {
       identity.cutoff(); ctx?.get('workdshIdentity')?.cutoff(); ctx?.get('afosEnterpriseIngress')?.cutoff();
