@@ -1,4 +1,6 @@
 import { createRequire } from 'node:module';
+import { isAbsolute } from 'node:path';
+import { EnterpriseProfileError } from './snapshot-authority.js';
 import { fixedNativeLoaderRows } from './native-loader-rows.js';
 import { fixedEnterpriseCoreRows, type CoreRowOptions } from './core-rows.js';
 
@@ -13,7 +15,9 @@ export const MANAGED_CLI_SCOPE_KEYS=Object.freeze([
 ]);
 /** Fixed zero-expression patch for an otherwise empty, Main-owned CLI Profile. */
 export function managedCliProfilePatch(options:CoreRowOptions){
+ if(options.frontendIndex!==undefined&&(!options.nativeCaller||!isAbsolute(options.frontendIndex)||/[\u0000-\u001f\u007f]/u.test(options.frontendIndex)))throw new EnterpriseProfileError('afos/cli-bootstrap-refused');
  const require=createRequire(import.meta.url);
+ const frontendRequire=options.frontendIndex?createRequire(createRequire(require.resolve('@deepseek-ai/dsh/package.json')).resolve('@deepseek-ai/dsh-web-app/package.json')):undefined;
  const identity=require.resolve('workdsh-provider-identity-nocobase');
  const domain=require.resolve('@deepseek-ai/dsh-storage-domain');
  const loop=require.resolve('@deepseek-ai/dsh-agent-loop');
@@ -26,6 +30,7 @@ export function managedCliProfilePatch(options:CoreRowOptions){
    {id:'afos-cli-identity',name:require.resolve('workdsh-provider-enterprise-profile/cli-ready')},
    ...core,
    ...(options.nativeCaller?[{id:'afos-cli-native-owner',name:require.resolve('workdsh-provider-enterprise-profile/cli-native-owner')},...fixedNativeLoaderRows(options,true).map(row=>({...row,inject:['afosCliProfileReady']}))]:[]),
+   ...(options.frontendIndex?[{id:'afos-cli-online-static',name:frontendRequire!.resolve('@deepseek-ai/dsh-host-frontend-static'),inject:['afosCliProfileReady'],config:{distIndex:options.frontendIndex}}]:[]),
    {id:'afos-cli-core',name:require.resolve('workdsh-provider-enterprise-profile/cli-core'),...(options.nativeCaller?{inject:['afosNativeReadBridge','afosNativeHttpProof','afosNativeCallerProof','afosCliNativeReady']}:{})},
   ]}]}];
 }

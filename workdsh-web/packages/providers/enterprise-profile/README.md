@@ -107,3 +107,5 @@ local source/lock changes, then repeating frozen installs and consumer tests.
 Preserve personal Profiles, Sessions, owner records, namespace drafts, credentials
 and server receipts. No upstream, production, merge, release or deployment action
 is implied.
+
+The optional original CLI online carrier now has a private ready handoff and an owned Electron Session/window connection. Production capabilities remain refused; cold catalog/history and full Composer support remain separate gaps. See [ONLINE_CARRIER.md](./ONLINE_CARRIER.md).

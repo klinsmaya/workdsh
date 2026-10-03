@@ -76,3 +76,5 @@ Main 另有私有 `ownedSessionRead`：每次取得当前项目的服务端新�
 或过期 Run 的执行准入。Host 启动失败会在等待销毁前撤销已领取能力。新增三个真实
 Core 检查覆盖已完成执行后的历史授权、服务端撤权及失败启动。这不代表原生
 Conversation 已挂载，也不授权桌面激活。
+
+可选原 CLI 在线载体已提供 private ready 交接与自有 Electron Session/window 接点。生产 capability 仍拒绝；cold catalog/history 和完整 Composer 支持仍是独立缺口。见 [ONLINE_CARRIER.zh-CN.md](./ONLINE_CARRIER.zh-CN.md)。

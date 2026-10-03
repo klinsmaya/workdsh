@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { cliReady, onlineBootstrap, type MainCliOnlineBootstrap, type MainCliOnlineOwner, type MainCliReady } from './main-cli-ready.js';
 import { parentCallerIpc, childCallerIpc } from './main-caller-ipc.js';
 import { finiteCallerRequest, type NativeCallerIssuer } from './native-caller-ipc.js';
 import type { NativeCallerProof } from './native-ws-admission.js';
@@ -17,7 +18,8 @@ export interface MainIpcEndpoint {
   messages(listener: (message: unknown) => void): () => void;
   disconnected(listener: () => void): () => void;
 }
-export interface MainIpcBootstrap { readonly root: string; readonly model: ModelPolicy; readonly nativeCaller?: true }
+export interface MainIpcBootstrap { readonly root: string; readonly model: ModelPolicy; readonly nativeCaller?: true; readonly online?: MainCliOnlineBootstrap }
+export type { MainCliOnlineOwner, MainCliReady } from './main-cli-ready.js';
 const METHODS = {
   'caller.admit': ['request'], 'caller.assert': ['leaseId'], 'caller.release': ['leaseId'],
   'authority.current': [], 'state.refresh': [], 'materials.list': [],
@@ -77,13 +79,15 @@ function safeCode(error:unknown):string {
 interface ParentStream { readonly iterator:AsyncIterator<Uint8Array>; readonly abort:AbortController; busy:boolean; bytes:number; remainder:Uint8Array; }
 /** Main retains credentials, leases, durable drafts and current authority. Requires a real captured Host signal. */
 export async function attachMainBusinessIpc(endpoint:MainIpcEndpoint,business:MainBusinessCapabilities,
-  startSignal:AbortSignal,bootstrap:MainIpcBootstrap,callerIssuer?:NativeCallerIssuer):Promise<{readonly generation:string; close():Promise<void>}> {
+  startSignal:AbortSignal,bootstrap:MainIpcBootstrap,callerIssuer?:NativeCallerIssuer,onlineOwner?:MainCliOnlineOwner):Promise<{readonly generation:string; close():Promise<void>}> {
   if(!(business.hostSignal instanceof AbortSignal)||!isAbsolute(bootstrap.root))denied();
   const model=policy(bootstrap.model),generation=randomUUID(),lifetime=new AbortController();
+  const online=onlineOwner?onlineBootstrap({frontendIndex:onlineOwner.frontendIndex,nonce:randomUUID()}):undefined;
+  if(online&&!callerIssuer)denied();
   const signal=AbortSignal.any([startSignal,business.hostSignal,lifetime.signal]); signal.throwIfAborted();
   const leases=new Map<string,{lease:MainSessionBindingLease;runId:string;sessionId:string;expiresAt:string;committed:boolean;timer:ReturnType<typeof setTimeout>}>();
   const streams=new Map<string,ParentStream>(),pending=new Map<number,AbortController>();
-  let revision=0,lastCall=0,hello=false,closed=false,writeTail:Promise<unknown>=Promise.resolve();
+  let revision=0,lastCall=0,hello=false,ready=false,closed=false,writeTail:Promise<unknown>=Promise.resolve();
   const assert=()=>{if(closed||signal.aborted)throw new MainIpcError('afos/main-ipc-cutoff');};
   const currentSnapshot=():MainSnapshot=>{const local=business.localState();return snapshot({revision:++revision,local:{project:{id:local.project.id,name:local.project.name},authority:local.authority,lastSyncAt:local.lastSyncAt},drafts:business.drafts().map(draftDto)});};
   const send=async(message:object)=>{assert();boundedJson(message);await endpoint.send(message);assert();};
@@ -174,11 +178,16 @@ export async function attachMainBusinessIpc(endpoint:MainIpcEndpoint,business:Ma
   const accept=async(input:unknown):Promise<void>=>{
     try{
       assert();boundedJson(input);
-      const base=record(input,['contractVersion','kind'],['generation','callId','method','args']);if(base.contractVersion!==IPC_VERSION)denied();
+      const base=record(input,['contractVersion','kind'],['generation','callId','method','args','nonce','ready']);if(base.contractVersion!==IPC_VERSION)denied();
       if(base.kind==='hello'){
         record(input,['contractVersion','kind']);if(hello)denied();hello=true;
         const initial=await business.currentAuthority(signal);assert();
-        await send({contractVersion:IPC_VERSION,kind:'welcome',generation,bootstrap:{root:bootstrap.root,model,authority:authority(initial),...(callerIssuer?{nativeCaller:true}:{})},snapshot:currentSnapshot()});clearTimeout(startupDeadline);return;
+        await send({contractVersion:IPC_VERSION,kind:'welcome',generation,bootstrap:{root:bootstrap.root,model,authority:authority(initial),...(callerIssuer?{nativeCaller:true}:{}),...(online?{online}:{})},snapshot:currentSnapshot()});clearTimeout(startupDeadline);return;
+      }
+      if(base.kind==='ready'){
+        record(input,['contractVersion','kind','generation','nonce','ready']);
+        if(!hello||ready||!online||!onlineOwner||base.generation!==generation||base.nonce!==online.nonce)denied();
+        const value=cliReady(base.ready);assert();ready=true;onlineOwner.onReady(value);assert();return;
       }
       if(base.kind==='cancel'){
         record(input,['contractVersion','kind','generation','callId']);if(base.generation!==generation)denied();pending.get(integer(base.callId))?.abort();return;
@@ -218,7 +227,7 @@ export async function attachMainBusinessIpc(endpoint:MainIpcEndpoint,business:Ma
 interface Pending { readonly name:Method; readonly resolve:(value:unknown)=>void; readonly reject:(error:MainIpcError)=>void; readonly release:()=>void; }
 /** Child proxy exposes only fixed business operations; it never receives an OAuth/provider credential. */
 export async function connectMainBusinessIpc(endpoint:MainIpcEndpoint,startSignal:AbortSignal):Promise<{
-  readonly business:MainBusinessCapabilities;readonly nativeCaller:NativeCallerProof;readonly bootstrap:MainIpcBootstrap;readonly authority:GatewayAuthoritySnapshot;readonly signal:AbortSignal;close():void;
+  readonly business:MainBusinessCapabilities;readonly nativeCaller:NativeCallerProof;readonly bootstrap:MainIpcBootstrap;readonly authority:GatewayAuthoritySnapshot;readonly signal:AbortSignal;publishReady(ready:MainCliReady):Promise<void>;close():void;
 }> {
   const lifetime=new AbortController(),signal=AbortSignal.any([startSignal,lifetime.signal]),epoch=Object.freeze({});
   let generation:string|undefined,current:MainSnapshot|undefined,sequence=0,closed=false;
@@ -242,10 +251,11 @@ export async function connectMainBusinessIpc(endpoint:MainIpcEndpoint,startSigna
       if(base.contractVersion!==IPC_VERSION)denied();
       if(base.kind==='welcome'){
         const v=record(input,['contractVersion','kind','generation','bootstrap','snapshot']);if(generation||closed)denied();
-        const init=record(v.bootstrap,['root','model','authority'],['nativeCaller']),root=text(init.root,4096);if(!isAbsolute(root))denied();
+        const init=record(v.bootstrap,['root','model','authority'],['nativeCaller','online']),root=text(init.root,4096);if(!isAbsolute(root))denied();
         if(init.nativeCaller!==undefined&&init.nativeCaller!==true)denied();
         const initial=authority(init.authority);if(Date.parse(initial.expiresAt)<=Date.now())denied();
-        generation=id(v.generation);current=snapshot(v.snapshot);welcome.resolve({bootstrap:Object.freeze({root,model:policy(init.model),...(init.nativeCaller===true?{nativeCaller:true as const}:{})}),authority:initial});return;
+        const online=init.online===undefined?undefined:onlineBootstrap(init.online);if(online&&init.nativeCaller!==true)denied();
+        generation=id(v.generation);current=snapshot(v.snapshot);welcome.resolve({bootstrap:Object.freeze({root,model:policy(init.model),...(init.nativeCaller===true?{nativeCaller:true as const}:{}),...(online?{online}:{})}),authority:initial});return;
       }
       if(base.kind==='caller-cutoff'){record(input,['contractVersion','kind','generation','leaseId']);assert();if(base.generation!==generation)denied();callers?.cutoff(base.leaseId);return;}
       if(base.kind==='cutoff'){record(input,['contractVersion','kind','generation']);if(base.generation!==generation)denied();close();return;}
@@ -344,5 +354,11 @@ export async function connectMainBusinessIpc(endpoint:MainIpcEndpoint,startSigna
       }finally{if(!closed)try{await call('model.close',{streamId},signal);}catch{/* A completed stream is already closed; no retry of model writes. */}}
     },
   };
-  return Object.freeze({business:Object.freeze(business),nativeCaller:callers.proof,bootstrap:initialized.bootstrap,authority:initialized.authority,signal,close});
+  let published=false;
+  const publishReady=async(value:MainCliReady):Promise<void>=>{
+    assert();const online=initialized.bootstrap.online;if(!online||published)denied();
+    const ready=cliReady(value);published=true;
+    try{await endpoint.send({contractVersion:IPC_VERSION,kind:'ready',generation,nonce:online.nonce,ready});assert();}catch{close();throw new MainIpcError('afos/main-ipc-cutoff');}
+  };
+  return Object.freeze({business:Object.freeze(business),nativeCaller:callers.proof,bootstrap:initialized.bootstrap,authority:initialized.authority,signal,publishReady,close});
 }

@@ -22,6 +22,7 @@
     "lib/workdsh-main.js",
     "lib/enterprise-preload.cjs",
     "renderer/afos-local/**",
+    "renderer/afos-online/**",
     "README.md",
     "README.zh.md",
     "THIRD_PARTY_NOTICES.md",
@@ -37,7 +38,7 @@
     "node": "^22.19.0 || >=24.0.0"
   },
   "scripts": {
-    "build": "node scripts/generate-windows-app-icon.mjs && node scripts/generate-mac-app-icon.mjs && node scripts/generate-tray-icons.mjs && node scripts/clean.mjs && tsdown && node scripts/build-enterprise-renderer.mjs && tsc -p tsconfig.json --emitDeclarationOnly",
+    "build": "node scripts/generate-windows-app-icon.mjs && node scripts/generate-mac-app-icon.mjs && node scripts/generate-tray-icons.mjs && node scripts/clean.mjs && tsdown && node scripts/build-enterprise-renderer.mjs && node scripts/build-enterprise-renderer.mjs --online && tsc -p tsconfig.json --emitDeclarationOnly",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.tests.json --noEmit",
     "test": "vitest run && node --test scripts/verify-profile-release.test.mjs && node --experimental-transform-types --test scripts/enterprise-local-carrier.test.mjs scripts/enterprise-local-main.test.mjs scripts/enterprise-cli-notification.test.mjs",
     "check": "yarn run build && yarn run typecheck && yarn run test",
@@ -103,6 +104,7 @@
       "lib/workdsh-main.js",
       "lib/enterprise-preload.cjs",
       "renderer/afos-local/**",
+      "renderer/afos-online/**",
       "package.json",
       "!node_modules/**",
       "afos-desktop-config.json"

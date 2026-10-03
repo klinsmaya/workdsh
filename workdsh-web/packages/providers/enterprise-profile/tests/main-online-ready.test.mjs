@@ -1,0 +1,19 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {fork} from 'node:child_process';
+import {once} from 'node:events';
+import {createInterface} from 'node:readline';
+import {attachMainBusinessIpc} from '../dist/main-ipc.js';
+const grant=()=>({contractVersion:'afos.identity.v1',binding:{issuer:'https://enterprise.example',subject:'alice',organizationId:'org1',deviceId:'device1'},project:{id:'p1',organizationId:'org1',name:'Allowed'},permissions:{read:true,archive:false},authorizationRevision:'a'.repeat(64),expiresAt:new Date(Date.now()+60000).toISOString()});
+async function fixture(t){const child=fork(new URL('./fixtures/main-online-ready-child.mjs',import.meta.url),[],{stdio:['pipe','pipe','pipe','ipc'],serialization:'json',env:{PATH:process.env.PATH}}),lines=[],waiting=[],wire=[];let stderr='';child.stderr.on('data',b=>stderr+=b);
+createInterface({input:child.stdout}).on('line',line=>{const v=JSON.parse(line);waiting.length?waiting.shift()(v):lines.push(v);});const next=()=>lines.length?Promise.resolve(lines.shift()):new Promise(r=>waiting.push(r));
+const host=new AbortController(),events=[];
+const endpoint={send:message=>{wire.push({kind:message.kind});return new Promise((resolve,reject)=>child.send(message,e=>e?reject(e):resolve()));},messages:listener=>{child.on('message',listener);return()=>child.off('message',listener);},disconnected:listener=>{child.on('disconnect',listener);return()=>child.off('disconnect',listener);}};
+const business={hostSignal:host.signal,currentAuthority:async()=>grant(),localState:()=>({project:grant().project,authority:'current',lastSyncAt:new Date().toISOString()}),drafts:()=>[]};
+const channel=await attachMainBusinessIpc(endpoint,business,host.signal,{root:'/tmp/afos-private-online-ready',model:{provider:'managed',model:'fixed',maxTokens:64}},{assertRequest(){throw Error('no document owner');}},{frontendIndex:'/tmp/afos-private-online-ready/index.html',onReady:value=>events.push(value)});
+t.after(async()=>{await channel.close();child.kill();if(child.exitCode===null&&child.signalCode===null)await once(child,'exit');assert.equal(stderr,'');});assert.deepEqual(await next(),{bound:true,online:true});
+return {child,channel,host,events,wire,command:async op=>{child.stdin.write(JSON.stringify({op})+'\n');return next();}};}
+test('private real Node fork ready binds generation/nonce and permits exactly one callback',{timeout:5000},async t=>{const f=await fixture(t);await f.command('normal');await new Promise(r=>setTimeout(r,20));assert.equal(f.events.length,1);await f.command('duplicate');await new Promise(r=>setTimeout(r,20));assert.equal(f.events.length,1);assert.ok(f.wire.some(x=>x.kind==='cutoff'));});
+for(const op of ['wrong-generation','wrong-nonce','wrong-host','extra'])test('private real Node fork rejects '+op+' before ready callback',{timeout:5000},async t=>{const f=await fixture(t);await f.command(op);await new Promise(r=>setTimeout(r,20));assert.equal(f.events.length,0);assert.ok(f.wire.some(x=>x.kind==='cutoff'));});
+test('private real Node fork Host cutoff discards late ready without resurrection',{timeout:5000},async t=>{const f=await fixture(t);f.host.abort();await f.command('late');await new Promise(r=>setTimeout(r,20));assert.equal(f.events.length,0);});
+test('private real Node fork child exit before ready cannot commit readiness',{timeout:5000},async t=>{const f=await fixture(t);f.child.kill();await once(f.child,'exit');await new Promise(r=>setTimeout(r,20));assert.equal(f.events.length,0);});

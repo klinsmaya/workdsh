@@ -17,8 +17,14 @@ export function apply(ctx:Context):void {
  }
  ctx.provide('afosCliCoreReady',ready);
  const launcher=ctx.get('appReady');
- if(!launcher||typeof launcher.onReady!=='function')throw new EnterpriseProfileError('afos/cli-core-not-ready');
+ const exit=ctx.get('appExit');
+ if(!launcher||typeof launcher.onReady!=='function'||typeof exit!=='function')throw new EnterpriseProfileError('afos/cli-core-not-ready');
  ctx.effect(()=>launcher.onReady(()=>{
-  if(!ready.signal.aborted)process.stdout.write('AFOS_CLI_READY v1\n');
+  if(ready.signal.aborted)return;
+  if(ready.online){
+   const server=ctx.webServer;
+   void ready.online.publishReady({host:'127.0.0.1',port:server.port,authenticatedUrl:ctx.connection.authenticatedUrl(`http://127.0.0.1:${server.port}/`)}).catch(()=>exit(1));
+  }
+  process.stdout.write('AFOS_CLI_READY v1\n');
  }), 'afos-original-cli-ready');
 }

@@ -2,7 +2,7 @@ import { constants, openSync, closeSync, readFileSync, fstatSync } from 'node:fs
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { EnterpriseCliHost } from './enterprise-cli-host.ts'
+import { EnterpriseCliHost, type EnterpriseCliHostOptions } from './enterprise-cli-host.ts'
 import type { EnterpriseHostLifecycle, ManagedDesktopConfig } from './enterprise-main.ts'
 
 export interface EnterpriseRuntimePolicy {
@@ -45,6 +45,7 @@ export function loadEnterpriseRuntimePolicy(path: string, expected: Pick<Managed
 export function createEnterpriseElectronHost(options: { readonly appPath: string; readonly runtimeProfile: string; readonly executable: string;
   readonly config: Pick<ManagedDesktopConfig, 'releaseId' | 'policyRevision'>; readonly writeLog: (text: string) => void;
   readonly onUnexpectedStop?: () => Promise<void>;
+  readonly callerIssuer?: EnterpriseCliHostOptions['callerIssuer']; readonly online?: EnterpriseCliHostOptions['online'];
   readonly createHost?: (policy: EnterpriseRuntimePolicy) => EnterpriseHostLifecycle }): EnterpriseHostLifecycle {
   let owner: EnterpriseHostLifecycle | undefined
   return {
@@ -54,7 +55,8 @@ export function createEnterpriseElectronHost(options: { readonly appPath: string
       if (!owner) {
         const policy = loadEnterpriseRuntimePolicy(join(options.appPath, 'afos-host-runtime.json'), options.config)
         owner = options.createHost?.(policy) ?? new EnterpriseCliHost({ executable: options.executable, runtimeProfile: options.runtimeProfile, model: policy.model, writeLog: options.writeLog,
-          ...(options.onUnexpectedStop ? { onUnexpectedStop: options.onUnexpectedStop } : {}) })
+          ...(options.onUnexpectedStop ? { onUnexpectedStop: options.onUnexpectedStop } : {}),
+          ...(options.callerIssuer ? { callerIssuer: options.callerIssuer } : {}), ...(options.online ? { online: options.online } : {}) })
       }
       await owner.start(...args)
     },

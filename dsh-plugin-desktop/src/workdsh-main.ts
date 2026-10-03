@@ -242,6 +242,7 @@ async function stopRuntime(): Promise<void> {
 
 /** Native account owner and its finite local draft face; Host activation remains refused. */
 function installEnterpriseEntry(): boolean {
+  let onlineOwner: ReturnType<typeof createEnterpriseLocalWindow>['online'] | undefined
   const enterprisePaths = enterpriseRuntimePaths(app.getAppPath(), process.resourcesPath, app.isPackaged)
   enterpriseSession = createEnterpriseEntry({
     configPath: join(app.getAppPath(), 'afos-desktop-config.json'),
@@ -249,6 +250,12 @@ function installEnterpriseEntry(): boolean {
     storage: safeStorage,
     openBrowser: async url => { await shell.openExternal(url) },
     host: config => createEnterpriseElectronHost({ appPath: app.getAppPath(), ...enterprisePaths, config,
+      callerIssuer: { assertRequest: (request, signal) => { if (!onlineOwner) throw new Error('enterprise/online-carrier-refused'); return onlineOwner.callerIssuer.assertRequest(request, signal) } },
+      online: { frontendIndex: join(app.getAppPath(), 'renderer', 'afos-online', 'index.html'), onReady: async ready => {
+        const accountSignal = enterpriseSession?.localDraftCapabilities().accountSignal
+        if (!onlineOwner || !accountSignal) throw new Error('enterprise/online-carrier-refused')
+        await onlineOwner.showOnline(ready, accountSignal)
+      } },
       writeLog: text => process.stderr.write(redactRuntimeLog(text)),
       onUnexpectedStop: async () => {
         const stopping = enterpriseSession?.stopEnterprise()
@@ -281,10 +288,10 @@ function installEnterpriseEntry(): boolean {
   refreshMenu()
   const local = createEnterpriseLocalWindow({ createWindow: options => new BrowserWindow(options), ipc: ipcMain, appPath: app.getAppPath(),
     capabilities: () => localSession.localDraftCapabilities(), projectDraft: runtimeDraftProjection(enterprisePaths.runtimeProfile),
-    closed: () => { localDraftOwner = undefined; window = undefined },
+    closed: () => { onlineOwner = undefined; localDraftOwner = undefined; window = undefined; void enterpriseSession?.stopEnterprise().catch(() => process.stderr.write('AFOS window cleanup failed\n')) },
     loadFailed: () => { process.stderr.write('AFOS local drafts window failed\n'); app.quit() },
   })
-  window = local.window; localDraftOwner = local.owner
+  window = local.window; localDraftOwner = local.owner; onlineOwner = local.online
   powerMonitor.on('suspend', () => { void session.suspend().then(() => localDraftOwner?.changed()).catch(() => { localDraftOwner?.changed(); process.stderr.write('AFOS suspend cleanup failed\n') }) })
   return true
 }

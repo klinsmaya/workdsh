@@ -5,7 +5,7 @@ import type { EnterpriseBinding } from 'workdsh-contracts';
 import type { ModelPolicy } from '@afos/model-adapter';
 import { EnterpriseProfileError } from './snapshot-authority.js';
 import { fixedEnterpriseComposition, ENTERPRISE_HOST_PACKAGES } from './profile-policy.js';
-export interface CoreRowOptions { readonly root:string; readonly binding:EnterpriseBinding; readonly model:ModelPolicy; readonly signal:AbortSignal; readonly nativeCaller?:true; }
+export interface CoreRowOptions { readonly root:string; readonly binding:EnterpriseBinding; readonly model:ModelPolicy; readonly signal:AbortSignal; readonly nativeCaller?:true; readonly frontendIndex?:string; }
 function managedDirectory(path:string):void {
   if(!isAbsolute(path))throw new EnterpriseProfileError('afos/profile-storage-denied');
   mkdirSync(path,{recursive:true,mode:0o700});const stat=lstatSync(path);

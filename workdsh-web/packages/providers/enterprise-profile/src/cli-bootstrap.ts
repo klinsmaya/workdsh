@@ -5,6 +5,7 @@ import type { EnterpriseBinding } from 'workdsh-contracts';
 import type { MainBusinessCapabilities } from './main-capabilities.js';
 import type { NativeCallerProof } from './native-ws-admission.js';
 import { connectMainBusinessIpc, type MainIpcEndpoint } from './main-ipc.js';
+import type { MainCliReady } from './main-cli-ready.js';
 import { EnterpriseProfileError, SnapshotIdentityAuthority } from './snapshot-authority.js';
 
 export const name = 'afos-managed-cli-bootstrap';
@@ -17,6 +18,7 @@ export interface CliBootstrap {
   readonly signal: AbortSignal;
   readonly business: MainBusinessCapabilities;
   readonly nativeCaller?: NativeCallerProof;
+  readonly online?: { readonly frontendIndex: string; readonly publishReady: (ready: MainCliReady) => Promise<void> };
 }
 declare module '@deepseek-ai/cordis' {
   interface Context { afosCliBootstrap: CliBootstrap; afosCliProfileReady: CliBootstrap; }
@@ -55,7 +57,8 @@ export async function apply(ctx: Context): Promise<void> {
     ctx.provide('afosMainBusiness', channel.business);
     ctx.provide('afosIdentityAuthority', identity);
     ctx.provide('afosCliBootstrap', Object.freeze({ root: channel.bootstrap.root, model: channel.bootstrap.model,
-      binding: channel.authority.binding, projectId: channel.authority.project.id, signal: channel.signal, business: channel.business,...(channel.bootstrap.nativeCaller?{nativeCaller:channel.nativeCaller}:{}) }));
+      binding: channel.authority.binding, projectId: channel.authority.project.id, signal: channel.signal, business: channel.business,...(channel.bootstrap.nativeCaller?{nativeCaller:channel.nativeCaller}:{}),
+      ...(channel.bootstrap.online?{online:Object.freeze({frontendIndex:channel.bootstrap.online.frontendIndex,publishReady:channel.publishReady})}:{}) }));
     channel.signal.throwIfAborted();
     // Return ACTIVE before the next plugin awaits Identity. A LOADING provider's
     // own injected child can return PENDING; it is not an initialization barrier.

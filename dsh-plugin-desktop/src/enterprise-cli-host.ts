@@ -7,6 +7,11 @@ import type { CurrentAuthoritySnapshot } from './enterprise-broker.ts'
 import type { EnterpriseHostBusinessCapabilities, EnterpriseHostLifecycle } from './enterprise-main.ts'
 import type { RecoveryLayout } from './enterprise-recovery.ts'
 import { RuntimeLogFilter, runtimeEnvironment, stopRuntimeTree } from './runtime-security.ts'
+import type { MainCallerRequest, MainCallerPermit } from './enterprise-caller-proof.ts'
+
+/** Main-private port-zero readiness. Never return this object through Renderer IPC. */
+export interface EnterpriseCliReady { readonly host: '127.0.0.1'; readonly port: number; readonly authenticatedUrl: string; readonly signal: AbortSignal }
+export interface EnterpriseCallerIssuer { assertRequest(request: MainCallerRequest, signal: AbortSignal): Promise<MainCallerPermit> }
 
 interface ModelPolicy { readonly provider: string; readonly model: string; readonly maxTokens: number; readonly maxRequestBytes?: number }
 interface Endpoint {
@@ -16,11 +21,12 @@ interface Endpoint {
 }
 interface Attachment { readonly generation: string; close(): Promise<void> }
 interface PublicProfileExports {
-  managedCliProfilePatch(options: { root: string; binding: CurrentAuthoritySnapshot['binding']; model: ModelPolicy; signal: AbortSignal }): unknown
+  managedCliProfilePatch(options: { root: string; binding: CurrentAuthoritySnapshot['binding']; model: ModelPolicy; signal: AbortSignal; nativeCaller?: true; frontendIndex?: string }): unknown
 }
 interface PublicIpcExports {
   attachMainBusinessIpc(endpoint: Endpoint, business: EnterpriseHostBusinessCapabilities, signal: AbortSignal,
-    bootstrap: { root: string; model: ModelPolicy }): Promise<Attachment>
+    bootstrap: { root: string; model: ModelPolicy }, callerIssuer?: EnterpriseCallerIssuer,
+    online?: { frontendIndex: string; onReady(ready: Omit<EnterpriseCliReady, 'signal'>): void }): Promise<Attachment>
 }
 /** Main-only trusted runtime/configuration, never a Renderer DTO or plugin selector. */
 export interface EnterpriseCliHostOptions {
@@ -30,6 +36,8 @@ export interface EnterpriseCliHostOptions {
   readonly writeLog?: (text: string) => void
   /** Main-private notification after real readiness; never a child-reported state. */
   readonly onUnexpectedStop?: () => Promise<void>
+  readonly callerIssuer?: EnterpriseCallerIssuer
+  readonly online?: { readonly frontendIndex: string; readonly onReady: (ready: EnterpriseCliReady) => Promise<void> }
 }
 interface OwnedChild {
   readonly lifetime: AbortController
@@ -85,6 +93,7 @@ export class EnterpriseCliHost implements EnterpriseHostLifecycle {
   private owned: OwnedChild | undefined
   constructor(options: EnterpriseCliHostOptions) {
     checkPath(options.executable); checkPath(options.runtimeProfile)
+    if (options.online) { checkPath(options.online.frontendIndex); if (!options.callerIssuer || typeof options.online.onReady !== 'function') refused() }
     if (!options.model || ![options.model.provider, options.model.model].every(value =>
       typeof value === 'string' && value.length > 0 && value.length <= 256 && !/[\u0000-\u001f\u007f]/u.test(value))
       || !Number.isSafeInteger(options.model.maxTokens) || options.model.maxTokens < 1 || options.model.maxTokens > 1_000_000
@@ -101,8 +110,9 @@ export class EnterpriseCliHost implements EnterpriseHostLifecycle {
   processId(): number | undefined { return this.owned?.child?.pid }
   stop(): Promise<void> { return this.owned ? this.stopOwned(this.owned) : Promise.resolve() }
   private stopOwned(owned: OwnedChild): Promise<void> {
+    // Revoke the document/network owner synchronously, before waiting for the child.
+    owned.lifetime.abort()
     return owned.stopping ??= Promise.resolve().then(async () => {
-      owned.lifetime.abort()
       owned.releaseCutoff?.()
       await within(owned.prepared, AbortSignal.timeout(12_000))
       let closeFailed = false
@@ -146,13 +156,15 @@ export class EnterpriseCliHost implements EnterpriseHostLifecycle {
       await within(mkdir(join(owned.home, 'agents'), { mode: 0o700 }), signal, removeAbandonedHome); signal.throwIfAborted()
       const profile = join(owned.home, 'profiles', 'afos-managed')
       await within(mkdir(profile, { recursive: true, mode: 0o700 }), signal, removeAbandonedHome); signal.throwIfAborted()
-      const patch = profileModule.managedCliProfilePatch({ root: layout.profile, binding: fresh.binding, model: this.options.model, signal })
+      const patch = profileModule.managedCliProfilePatch({ root: layout.profile, binding: fresh.binding, model: this.options.model, signal,
+        ...(this.options.callerIssuer ? { nativeCaller: true as const } : {}), ...(this.options.online ? { frontendIndex: this.options.online.frontendIndex } : {}) })
       const encoded = JSON.stringify(patch)
       if (Buffer.byteLength(encoded) > 65_536) refused()
       await within(writeFile(join(profile, 'package.json'), JSON.stringify({ name: 'afos-managed-profile', private: true, type: 'module', dsh: { profile: { bundles: [] } } }) + '\n', { flag: 'wx', mode: 0o600 }), signal, removeAbandonedHome); signal.throwIfAborted()
       await within(writeFile(join(profile, 'cordis.patch.yml'), encoded + '\n', { flag: 'wx', mode: 0o600 }), signal, removeAbandonedHome); signal.throwIfAborted()
       await within(symlink(join(this.options.runtimeProfile, 'node_modules'), join(profile, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir'), signal, removeAbandonedHome); signal.throwIfAborted()
       const ready = Promise.withResolvers<void>(); let sawWelcome = false
+      let onlineReady: Omit<EnterpriseCliReady, 'signal'> | undefined
       const child = spawn(this.options.executable, [cli, '--profile', 'afos-managed'], {
         cwd: owned.home, env: managedEnvironment(owned.home),
         stdio: ['ignore', 'pipe', 'pipe', 'ipc'], serialization: 'json', windowsHide: true, detached: process.platform !== 'win32',
@@ -161,6 +173,7 @@ export class EnterpriseCliHost implements EnterpriseHostLifecycle {
       const unexpected = () => {
         if (this.owned !== owned || !owned.ready || owned.stopping || owned.signal.aborted || owned.unexpectedReported) return
         owned.unexpectedReported = true
+        owned.lifetime.abort()
         void Promise.resolve().then(() => this.options.onUnexpectedStop?.()).catch(() => { this.options.writeLog?.('Enterprise CLI unexpected-stop handling was refused.\n') })
       }
       ready.promise.catch(() => undefined)
@@ -169,7 +182,7 @@ export class EnterpriseCliHost implements EnterpriseHostLifecycle {
       child.once('disconnect', () => { unexpected(); failReady(); cutoff() })
       const readyCutoff = () => failReady(); signal.addEventListener('abort', readyCutoff, { once: true })
       const output = new RuntimeLogFilter(text => {
-        if (text === 'AFOS_CLI_READY v1\n') { ready.resolve(); return }
+        if (text === 'AFOS_CLI_READY v1\n') { if (!this.options.online) ready.resolve(); return }
         this.options.writeLog?.(text)
       }), errors = new RuntimeLogFilter(text => this.options.writeLog?.(text))
       child.stdout?.on('data', value => output.consume(value)); child.stderr?.on('data', value => errors.consume(value))
@@ -185,12 +198,14 @@ export class EnterpriseCliHost implements EnterpriseHostLifecycle {
         disconnected: listener => { child.on('disconnect', listener); return () => { child.off('disconnect', listener) } },
       }
       try {
-        owned.attachment = await within(ipcModule.attachMainBusinessIpc(endpoint, business, signal, { root: layout.profile, model: this.options.model }), signal,
+        owned.attachment = await within(ipcModule.attachMainBusinessIpc(endpoint, business, signal, { root: layout.profile, model: this.options.model }, this.options.callerIssuer,
+          this.options.online ? { frontendIndex: this.options.online.frontendIndex, onReady: value => { if (!signal.aborted) { onlineReady = value; ready.resolve() } } } : undefined), signal,
           async attachment => { await attachment?.close() })
         signal.throwIfAborted(); await within(ready.promise, signal); signal.throwIfAborted()
         if (!sawWelcome || !child.connected || child.exitCode !== null || child.signalCode !== null) refused()
         const current = await within(business.currentAuthority(signal), signal); signal.throwIfAborted()
         if (!sameAuthority(fresh, current) || !Number.isFinite(Date.parse(current.expiresAt)) || Date.parse(current.expiresAt) <= Date.now()) refused()
+        if (this.options.online) { if (!onlineReady) refused(); await within(this.options.online.onReady(Object.freeze({ ...onlineReady, signal })), signal); signal.throwIfAborted() }
         owned.ready = true
       } finally { signal.removeEventListener('abort', readyCutoff) }
     } catch {
