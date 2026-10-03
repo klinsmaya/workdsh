@@ -1,0 +1,13 @@
+# Main-owned local enterprise drafts
+
+D02/D05/D09 continuation, based on the AFOS desktop handoff. EnterpriseMainSession remains the account and credential owner; EnterpriseRecoveryStore remains the only durable local draft/outbox truth. The pinned original DSH Host, Session, Agent loop, Loader and Conversation are unchanged.
+
+`localDraftCapabilities()` captures the currently selected account/project and its direct lifetime signal. Only the trusted Electron Main owner receives this object. Its four fields are accountSignal, localState, drafts and editDraft. It survives a same-account Host stop and restart; logout, account/project switch, failed selection and suspend immediately abort it. It cannot authorize a Run, read new materials, invoke the model, publish a Session, cancel execution or archive a result. Its state always advertises offline authority: cached selection permits local copies and never proves current enterprise permission.
+
+The existing public `workdsh-provider-enterprise-profile/local-drafts` export provides only the original stateless draftView projection. The carrier must map Main-private records with that projection before IPC. Renderer receives neither Run binding/input snapshot internals nor credentials, arbitrary paths, commands or URLs. Main still requires an exact current-project draft id; edits reject active drafts, immutable/unresolved archives and UTF-8 bodies over the afos.drafts.v1 64 KiB limit.
+
+The trusted `stopEnterprise()` action revokes enterprise execution and the old Host generation before awaiting actual Host stop. Only successful stop confirmation projects unfinished local records as interrupted in the existing journal, and retires that execution's admissions. It never declares cancelled, complete or archived from a client report. A failed stop leaves active records uncertain and uneditable; receipts, input pins, account ownership, saved copies and outbox intents are retained. Application suspend continues to revoke account access and requires explicit reauthentication.
+
+Scope evidence: main-local-drafts.integration.mjs uses real Main/Broker/Recovery and controlled IdP/server replies. Original AT-13/15/16/31/40/41/43/44/52 are engineering support only; complete cross-process GUI, Electron admission, Windows/macOS/native isolation and real enterprise/OS acceptance require their own evidence. Production ingressValidated:false/sandbox:unavailable remains closed.
+
+Rollback: preserve user changes and business data, stop the optional Host, revert this local reviewed source change on a separate clean review branch and repeat the same consumers. Do not delete Recovery/outbox/vaults or migrate a production database. No release, push, merge or deployment is authorized here.

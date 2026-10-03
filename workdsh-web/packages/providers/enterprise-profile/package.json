@@ -77,6 +77,10 @@
     "./cli-profile": {
       "types": "./dist/cli-profile.d.ts",
       "default": "./dist/cli-profile.js"
+    },
+    "./local-drafts": {
+      "types": "./dist/local-drafts.d.ts",
+      "default": "./dist/local-drafts.js"
     }
   },
   "files": [

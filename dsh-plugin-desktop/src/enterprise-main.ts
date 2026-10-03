@@ -46,6 +46,13 @@ export interface EnterpriseHostLifecycle {
   capabilities(): Promise<{ readonly ingressValidated: boolean; readonly sandbox: 'full' | 'partial' | 'unavailable' }>
   start(layout: RecoveryLayout, authority: CurrentAuthoritySnapshot, signal: AbortSignal, business: EnterpriseHostBusinessCapabilities): Promise<void>
 }
+/** Main-private access to the current account's local copies, independent of a Host. */
+export interface EnterpriseLocalDraftCapabilities {
+  readonly accountSignal: AbortSignal
+  localState(): { readonly project: { readonly id: string; readonly name: string }; readonly authority: 'offline'; readonly lastSyncAt: string }
+  drafts(): readonly DraftRecord[]
+  editDraft(draftId: string, content: string): DraftRecord
+}
 export class EnterpriseMainError extends Error {
   constructor(readonly code: string) { super(code) }
 }
@@ -63,6 +70,7 @@ export class EnterpriseMainSession {
   private hostGeneration = 0
   private lifetime = new AbortController()
   private execution = new AbortController()
+  private startupLifetime = new AbortController()
   private mutationTail: Promise<unknown> = Promise.resolve()
   private hostStop: Promise<void> | undefined
   private recovery: EnterpriseRecoveryStore | undefined
@@ -101,6 +109,8 @@ export class EnterpriseMainSession {
   private cutoff(): void {
     ++this.generation
     ++this.hostGeneration
+    this.startupLifetime.abort()
+    this.startupLifetime = new AbortController()
     this.execution.abort()
     this.execution = new AbortController()
     this.lifetime.abort()
@@ -197,6 +207,7 @@ export class EnterpriseMainSession {
       this.recovery = EnterpriseRecoveryStore.open(this.base, authority.binding, this.recoveryTransport(), this.recoveryOptions)
       await this.auth.persistRefresh(this.vault, this.namespace)
       this.current(generation)
+      this.authoritySyncedAt = new Date().toISOString()
       this.ready = true
       return authority
     })
@@ -228,6 +239,7 @@ export class EnterpriseMainSession {
         this.recovery = EnterpriseRecoveryStore.open(this.base, binding, this.recoveryTransport(), this.recoveryOptions)
         await this.auth.persistRefresh(this.vault, namespace)
         this.current(generation)
+        this.authoritySyncedAt = new Date().toISOString()
         this.ready = true
         return authority
       } catch (error) {
@@ -278,16 +290,21 @@ export class EnterpriseMainSession {
   }
   startHost(signal?: AbortSignal): Promise<void> {
     const generation = this.generation
-    const combined = this.signal(signal)
+    // Keep the source strongly captured across every startup await. A native
+    // stop cancels already-queued starts without revoking account-local copies.
+    const startupSignal = this.startupLifetime.signal
+    const combined = AbortSignal.any([this.signal(signal), startupSignal])
+    const currentStartup = () => { this.current(generation); startupSignal.throwIfAborted(); combined.throwIfAborted() }
     return this.mutate(generation, async () => {
+      currentStartup()
       const authority = await this.readAuthority(combined, true)
+      currentStartup()
       const capability = await this.host.capabilities()
-      this.current(generation)
-      combined.throwIfAborted()
+      currentStartup()
       if (Date.parse(authority.expiresAt) <= Date.now()) fail('authority-expired')
       if (!capability.ingressValidated || capability.sandbox !== 'full') fail('profile-or-sandbox-unverified')
       await this.stopHost()
-      this.current(generation); combined.throwIfAborted()
+      currentStartup()
       if (Date.parse(authority.expiresAt) <= Date.now()) fail('authority-expired')
       ++this.hostGeneration
       this.execution.abort()
@@ -298,7 +315,7 @@ export class EnterpriseMainSession {
       if (!this.recovery) fail('select-project-required')
       // This owner must publish its process handle before awaiting readiness.
       // Serialize completion/cleanup before a switch can start another Host.
-      try { await this.host.start(this.recovery.layout, authority, combined, this.hostBusiness(generation)); this.current(generation) }
+      try { await this.host.start(this.recovery.layout, authority, combined, this.hostBusiness(generation)); currentStartup() }
       catch (error) {
         // A failed start may already have captured private Main read grants.
         // Revoke them before awaiting disposal of the partially created Host.
@@ -548,6 +565,57 @@ export class EnterpriseMainSession {
     })
     this.mutationTail = cleanup.catch(() => undefined)
     return cleanup
+  }
+  /** Native Main action: retain local copies, revoke execution, then confirm Host exit. */
+  stopEnterprise(): Promise<void> {
+    const generation = this.generation
+    this.startupLifetime.abort(new EnterpriseMainError('enterprise/host-start-stopped'))
+    this.startupLifetime = new AbortController()
+    this.markOffline()
+    ++this.hostGeneration
+    return this.mutate(generation, async () => {
+      await this.stopHost()
+      this.current(generation)
+      this.recovery?.interruptAfterHostStop()
+      this.activeRunId = undefined
+      this.runs.clear()
+      this.sessionRuns.clear()
+      this.sessionLeases.clear()
+    })
+  }
+  /** Never serialize this capability or its raw records to a Renderer. */
+  localDraftCapabilities(): EnterpriseLocalDraftCapabilities {
+    const generation = this.generation, accountSignal = this.lifetime.signal
+    const active = () => {
+      this.current(generation)
+      accountSignal.throwIfAborted()
+      if (!this.ready || !this.recovery || !this.selectedProject || !this.authoritySyncedAt) fail('select-project-required')
+    }
+    active()
+    const own = (draftId: string): DraftRecord => {
+      active()
+      if (!bounded(draftId)) fail('draft-not-owned')
+      const draft = this.recovery!.list().find(item => item.draftId === draftId && item.run.projectId === this.selectedProject!.id)
+      if (!draft) fail('draft-not-owned')
+      return draft
+    }
+    return Object.freeze({
+      accountSignal,
+      localState: () => {
+        active()
+        // Cached project selection permits local copies, never fresh enterprise actions.
+        return Object.freeze({ project: Object.freeze({ id: this.selectedProject!.id, name: this.selectedProject!.name }),
+          authority: 'offline' as const, lastSyncAt: this.authoritySyncedAt! })
+      },
+      drafts: () => { active(); return this.recovery!.list().filter(item => item.run.projectId === this.selectedProject!.id) },
+      editDraft: (draftId: string, content: string) => {
+        const draft = own(draftId)
+        if (draft.archive !== 'local-only' || ['local_queued', 'running', 'cancel_requested'].includes(draft.localExecution)) fail('draft-edit-conflict')
+        // afos.drafts.v1 uses a 64 KiB UTF-8 body, stricter than the recovery document.
+        if (typeof content !== 'string' || Buffer.byteLength(content, 'utf8') > 64 * 1024) fail('draft-content-invalid')
+        return this.recovery!.editDraft(draftId, content)
+      },
+    })
   }
   suspend(): Promise<void> { this.cutoff(); return this.mutate(this.generation, () => this.stopHost()) }
 }

@@ -338,6 +338,13 @@ export class EnterpriseRecoveryStore {
       localExecution: 'local_queued', lastSessionSeq: -1, archive: 'local-only', ...(predecessor ? { predecessor } : {}) }, this.binding)
     this.publish([...this.drafts, draft]); return this.draft(draft.draftId)
   }
+  /** Main calls this only after its process owner confirms the Host has stopped. */
+  interruptAfterHostStop(): void {
+    this.active()
+    const interrupted = this.drafts.map(draft => ['running', 'local_queued', 'cancel_requested'].includes(draft.localExecution)
+      ? record({ ...draft, localExecution: 'interrupted', updatedAt: new Date().toISOString() }, this.binding) : draft)
+    if (interrupted.some((draft, index) => draft !== this.drafts[index])) this.publish(interrupted)
+  }
   /** Editing an already-owned local copy is available offline. An unresolved or archived intent is immutable. */
   editDraft(draftId: string, content: string): DraftRecord {
     const draft = this.draft(draftId)
