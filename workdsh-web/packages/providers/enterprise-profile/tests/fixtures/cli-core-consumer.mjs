@@ -1,15 +1,29 @@
 import {createInterface} from 'node:readline';
+import {writeSync} from 'node:fs';
 import {createUserMessage} from '@deepseek-ai/dsh-llm';
 export const name='afos-cli-core-fixture';
 export const inject=['afosCliCoreReady','workdshIdentity','afosDraftRuntime','agents','tools'];
 export async function apply(ctx,config={}){
  const ready=ctx.afosCliCoreReady;ready.signal.throwIfAborted();
- let wakes=0,toolCalls=0;
+ let wakes=0,toolCalls=0,created=0,disposed=0;
+ // Test-only root-lifetime public event counts survive private fixture disposal.
+ const observe=event=>process.stdout.write('AFOS_OBSERVATION '+JSON.stringify({event,created,disposed,wakes,toolCalls,agents:created-disposed})+'\n');
+ ctx.root.on('agent/created',()=>{created++;observe('agent/created');},{global:true});
+ ctx.root.on('agent/disposed',()=>{disposed++;observe('agent/disposed');},{global:true});
+ observe('ready');
+ // Original CLI shutdown removes ctx.on listeners before Agent teardown settles.
+ // Capture only the original public registry, then read list() synchronously at
+ // Node exit; do not query disposed context services or infer a disposal event.
+ const observedAgents=ctx.agents;
+ process.once('exit',()=>{
+  try{const agents=observedAgents.list().length;writeSync(1,'AFOS_OBSERVATION '+JSON.stringify({event:'process/exit',created,disposed,wakes,toolCalls,agents})+'\n');}
+  catch{writeSync(1,'AFOS_OBSERVATION_UNAVAILABLE public-agent-list\n');}
+ });
  if(config.wakeBeforeAck)ctx.on('agent/created',async({agent})=>{
-  wakes++;agent.followup(createUserMessage({source:{kind:'user'},content:[{type:'text',text:'Creation wake must await Main ACK.'}]}));
+  wakes++;observe('creation-wake');agent.followup(createUserMessage({source:{kind:'user'},content:[{type:'text',text:'Creation wake must await Main ACK.'}]}));
   await new Promise(resolve=>setTimeout(resolve,20));
  },{global:true});
- ctx.on('session/event',(_session,event)=>{if(event.type==='tool/call')toolCalls++;});
+ ctx.root.on('session/event',(_session,event)=>{if(event.type==='tool/call'){toolCalls++;observe('tool/call');}},{global:true});
  const output=value=>process.stdout.write('AFOS_RESULT '+JSON.stringify(value)+'\n');
  const materials=await ready.business.materials(ready.signal);ready.signal.throwIfAborted();
  const rootLoader=ctx.root.get('loader'),owner=rootLoader?.locate(ctx.fiber);
