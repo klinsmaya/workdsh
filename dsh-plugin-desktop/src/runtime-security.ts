@@ -13,8 +13,9 @@ export function runtimeEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv
 
 export function redactRuntimeLog(text: string): string {
   return text
-    .replace(/(\b(?:access_token|refresh_token|id_token|token|code|state|client_secret|code_verifier)\s*[=:]\s*)[^\s&#"',]+/giu, '$1[REDACTED]')
-    .replace(/("(?:access_token|refresh_token|id_token|token|code|state|client_secret|code_verifier|cookie|set-cookie|authorization|api_key|password)"\s*:\s*")[^"]*/giu, '$1[REDACTED]')
+    .replace(/\b(?:cookie|set-cookie)\s*=\s*[^\r\n]*/giu, '[REDACTED COOKIE]')
+    .replace(/(\b(?:access_token|refresh_token|id_token|token|code|state|client_secret|code_verifier|verifier|api_key|password)\s*[=:]\s*)(?:"(?:\\.|[^"\\\r\n])*(?:"|\\?(?=\r?\n|$))|'(?:\\.|[^'\\\r\n])*(?:'|\\?(?=\r?\n|$))|[^\s&#"',]+)/giu, '$1[REDACTED]')
+    .replace(/("(?:access_token|refresh_token|id_token|token|code|state|client_secret|code_verifier|verifier|cookie|set-cookie|authorization|api_key|password)"\s*:\s*)"(?:\\.|[^"\\\r\n])*(?:"|\\?(?=\r?\n|$))/giu, '$1"[REDACTED]"')
     .replace(/\bBearer\s+[^\s"',]+/giu, 'Bearer [REDACTED]')
     .replace(/\b(?:Authorization|Cookie|Set-Cookie)\s*:\s*[^\r\n]*/giu, '[REDACTED HEADER]')
 }
@@ -52,7 +53,7 @@ export function safeExternalUrl(target: string): string | undefined {
     if (!host.includes('.') || host.startsWith('[') || /^[\d.]+$/u.test(host)
       || /(?:^|\.)(?:localhost|local|internal)$/u.test(host)) return undefined
     for (const key of url.searchParams.keys()) {
-      if (/^(?:token|access_token|refresh_token|id_token|code|state|client_secret)$/iu.test(key)) return undefined
+      if (/^(?:token|access_token|refresh_token|id_token|code|state|client_secret|code_verifier|verifier|cookie|set-cookie|authorization|api_key|password)$/iu.test(key)) return undefined
     }
     return url.href
   } catch { return undefined }

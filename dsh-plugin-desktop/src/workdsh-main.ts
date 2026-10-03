@@ -101,8 +101,8 @@ function startBrowserWorker(request: { port: number, profile: string }): void {
     page.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
     await page.loadURL('about:blank')
     process.stdout.write('WORKDSH_BROWSER_WORKER_READY\n')
-  }).catch(error => {
-    process.stderr.write(`WorkDSH browser worker failed: ${String(error)}\n`)
+  }).catch(() => {
+    process.stderr.write('WorkDSH browser worker failed\n')
     app.exit(1)
   })
 }
@@ -225,8 +225,8 @@ function startRuntime(home: string, profileDir: string): void {
   }
   child.stdout.on('data', consume)
   child.stderr.on('data', (chunk: Buffer) => stderrLog.consume(chunk))
-  child.once('error', cause => {
-    if (!quitting) throw cause
+  child.once('error', () => {
+    if (!quitting) throw new Error('DSH runtime process failed')
   })
   child.once('exit', code => {
     stdoutLog.flush()
