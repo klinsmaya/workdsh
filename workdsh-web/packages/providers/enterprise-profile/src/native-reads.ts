@@ -11,6 +11,7 @@ import { EnterpriseProfileError } from './snapshot-authority.js';
 import type {} from './runtime.js';
 import type {} from './authority-service.js';
 import type {} from '@deepseek-ai/dsh-api-gateway';
+import type {} from './native-ws-http-admission.js';
 
 export const NATIVE_READ_ENDPOINTS = Object.freeze(['session/list', 'session/page', 'session/projections', 'session/follow', 'session/control'] as const);
 const UNARY = new Set<string>(NATIVE_READ_ENDPOINTS.slice(0, 3));
@@ -30,6 +31,7 @@ export interface NativeReadBridgeOptions {
   readonly reader: Context;
   readonly controller: SessionController;
   readonly workspace: string;
+  readonly requireCallerProof?: boolean;
 }
 declare module '@deepseek-ai/cordis' {
   interface Context { afosNativeReadBridge: EnterpriseNativeReadBridge; }
@@ -46,9 +48,10 @@ export class EnterpriseNativeReadBridge extends Service {
   readonly #leases = new Set<Lease>();
   #installation: OwnedNativeReadInstallation | undefined;
   readonly #controller: SessionController;
+  readonly #requireCallerProof: boolean;
   constructor(ctx: Context, options: NativeReadBridgeOptions) {
     super(ctx, 'afosNativeReadBridge');
-    this.workspace = options.workspace; this.#reader = options.reader; this.#controller = options.controller;
+    this.workspace = options.workspace; this.#reader = options.reader; this.#controller = options.controller; this.#requireCallerProof = options.requireCallerProof === true;
     this.assertPrivateComposition();
     this.#shared = options.reader.connection.createSharedFetchHandler('/api');
     ctx.effect(() => async () => {
@@ -104,18 +107,22 @@ export class EnterpriseNativeReadBridge extends Service {
   }
   private async lease(endpoint: string, payload: unknown, callerSignal: AbortSignal): Promise<Lease> {
     this.assertPrivateComposition();
+    const proofOwner = this.ctx.get('afosNativeHttpProof');
+    if (this.#requireCallerProof && !proofOwner) throw denied();
+    const proof = proofOwner?.current();
     const sessionId = this.target(endpoint, payload);
     const before = this.#reader.agents.get(SessionId(sessionId));
     const session = this.#reader.sessions.get(SessionId(sessionId));
     if (!before || before.session !== session) throw denied();
-    const signal = AbortSignal.any([callerSignal, this.#lifetime.signal]); signal.throwIfAborted();
+    const signal = AbortSignal.any([callerSignal, this.#lifetime.signal, ...(proof ? [proof.signal] : [])]); signal.throwIfAborted();
     const grant = await this.ctx.afosMainBusiness.ownedSessionRead(sessionId, signal);
-    const expiresAt = Date.parse(grant.expiresAt);
+    const grantExpiresAt = Date.parse(grant.expiresAt);
+    const expiresAt = Math.min(grantExpiresAt, proof?.expiresAt ?? Infinity);
     if (grant.sessionId !== sessionId || !grant.epoch || typeof grant.epoch !== 'object'
-      || !(grant.signal instanceof AbortSignal) || grant.signal.aborted || !Number.isFinite(expiresAt)
-      || expiresAt <= Date.now() || expiresAt > Date.now() + 60_000 || this.selectedSession() !== sessionId
+      || !(grant.signal instanceof AbortSignal) || grant.signal.aborted || !Number.isFinite(grantExpiresAt)
+      || expiresAt <= Date.now() || grantExpiresAt > Date.now() + 60_000 || this.selectedSession() !== sessionId
       || this.#reader.agents.get(SessionId(sessionId)) !== before || this.#reader.sessions.get(SessionId(sessionId)) !== session) throw denied();
-    signal.throwIfAborted();
+    signal.throwIfAborted(); proof?.assertCurrent();
     const expiry = new AbortController();
     const combined = AbortSignal.any([signal, grant.signal, expiry.signal]);
     const timer = setTimeout(() => lease.close(), Math.max(1, expiresAt - Date.now())); timer.unref();
@@ -127,6 +134,21 @@ export class EnterpriseNativeReadBridge extends Service {
     try { combined.throwIfAborted(); return lease; }
     catch (error) { lease.close(); throw error; }
   }
+  /** Main-only original carrier admission; never serialized to a renderer. */
+  admitReadCarrier = async (callerSignal: AbortSignal): Promise<{
+    readonly signal: AbortSignal; readonly expiresAt: number; close(): void; assertCurrent(): void;
+  }> => {
+    const lease = await this.lease('session/list', { args: { _request: {} } }, callerSignal);
+    const assertCurrent = () => {
+      this.assertPrivateComposition(); lease.authority.signal.throwIfAborted();
+      if (Date.now() >= lease.expiresAt || this.selectedSession() !== lease.authority.sessionId
+        || this.#reader.agents.get(lease.authority.sessionId) !== lease.authority.agent
+        || this.#reader.sessions.get(lease.authority.sessionId) !== lease.authority.session) throw denied();
+    };
+    try { assertCurrent(); return Object.freeze({ signal: lease.authority.signal,
+      expiresAt: lease.expiresAt, close: lease.close, assertCurrent }); }
+    catch (error) { lease.close(); throw error; }
+  };
   /** Unary response encoding remains the original Connection/Gateway's responsibility. */
   invoke = async (endpoint: string, payload: unknown, callerSignal: AbortSignal): Promise<ConnectionRpcHandlerResult> => {
     if (!UNARY.has(endpoint)) {

@@ -6,6 +6,7 @@ import type {} from '@deepseek-ai/dsh-client-connection';
 export interface NativeAssemblyCaptures {
   controller(controller: SessionController): void;
   reader(context: Context): void;
+  mux?(context: Context): void;
 }
 declare module '@deepseek-ai/cordis' {
   interface Context { afosNativeAssemblyCapture: NativeAssemblyCaptures; }

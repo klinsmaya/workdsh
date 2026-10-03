@@ -34,7 +34,9 @@
   Connection, Gateway, public Typert schemas/definitions and five owned reads.
   Fresh Main grants use standard AsyncLocalStorage per invocation, preserving
   the original codecs/streams. No private WebServer, new port or event feed.
-  Native Client/$events/WS/Electron cross-process assembly remains separate work.
+  Explicit optional original Client/$events/WS component assembly is recorded in
+  NATIVE_WS_CLIENT.md. Actual Electron proof issuance/cross-process carrier and
+  complete Conversation/Workspace assembly remain unfinished.
 - Evidence: 20 admission cases, 18 actual official Core cases and eight native
   backend cases with strict cancellation assertions;
   identity/server/model replies remain fixtures, not target desktop AT passes.

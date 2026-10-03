@@ -12,6 +12,10 @@ import type { ModelPolicy } from '@afos/model-adapter';
 import './authority-service.js';
 import { EnterpriseNativeReadBridge } from './native-reads.js';
 import type { SessionController } from '@deepseek-ai/dsh-api-session-controller';
+import type {} from './native-ws-bridge.js';
+import type {} from './native-ws-connection.js';
+import type {} from './native-ws-http-admission.js';
+import type { NativeCallerProof } from './native-ws-admission.js';
 import type { NativeAssemblyCaptures } from './native-captures.js';
 
 export interface EnterpriseAssemblyOptions {
@@ -37,7 +41,16 @@ export async function bootEnterpriseCore(options: EnterpriseAssemblyOptions): Pr
 export async function bootEnterpriseNativeReadCore(options: EnterpriseAssemblyOptions): Promise<Context> {
   return bootCore(options, true);
 }
-async function bootCore(options: EnterpriseAssemblyOptions, nativeReads: boolean): Promise<Context> {
+export interface EnterpriseNativeWsAssemblyOptions extends EnterpriseAssemblyOptions {
+  /** Main-owned carrier caller proof, not a browser/model value. Missing capability refuses upgrades. */
+  readonly nativeCaller: NativeCallerProof;
+}
+/** Original mux candidate only; does not activate an Electron carrier. */
+export async function bootEnterpriseNativeWsCore(options: EnterpriseNativeWsAssemblyOptions): Promise<Context> {
+  if (!options.nativeCaller || typeof options.nativeCaller.assertRequest !== 'function') throw new EnterpriseProfileError('afos/native-read-denied');
+  return bootCore(options, true, options.nativeCaller);
+}
+async function bootCore(options: EnterpriseAssemblyOptions, nativeReads: boolean, nativeCaller?: NativeCallerProof): Promise<Context> {
   options.signal.throwIfAborted(); managedDirectory(options.root);
   const storage = join(options.root, 'business-storage'), sessions = join(options.root, 'sessions');
   managedDirectory(storage); managedDirectory(sessions);
@@ -60,11 +73,13 @@ async function bootCore(options: EnterpriseAssemblyOptions, nativeReads: boolean
     'workdsh-provider-enterprise-profile': fixedEnterpriseComposition(),
   };
   const rows = ENTERPRISE_HOST_PACKAGES.map((name, index) => ({ id: `afos-${index}`, name: require.resolve(name), ...(config[name] ? { config: config[name] } : {}) }));
-  let nativeController: SessionController | undefined, nativeReader: Context | undefined;
+  let nativeController: SessionController | undefined, nativeReader: Context | undefined, nativeMux: Context | undefined;
+  let rootOwner: Context | undefined;
   const nativeWorkspace = join(options.root, 'native-workspace');
   const nativeCaptures: NativeAssemblyCaptures = {
-    controller(value) { if (nativeController) throw new EnterpriseProfileError('afos/native-read-denied'); nativeController = value; },
-    reader(value) { if (nativeReader) throw new EnterpriseProfileError('afos/native-read-denied'); nativeReader = value; },
+    controller(value) { if (nativeController) throw new EnterpriseProfileError('afos/native-read-denied'); nativeController = value; if(nativeCaller)rootOwner?.provide('afosNativePrivateController',value); },
+    reader(value) { if (nativeReader) throw new EnterpriseProfileError('afos/native-read-denied'); nativeReader = value; if(nativeCaller)rootOwner?.provide('afosNativePrivateReader',value); },
+    mux(value) { if (nativeMux) throw new EnterpriseProfileError('afos/native-read-denied'); nativeMux = value; },
   };
   if (nativeReads) {
     managedDirectory(nativeWorkspace);
@@ -96,6 +111,19 @@ async function bootCore(options: EnterpriseAssemblyOptions, nativeReads: boolean
         row('@deepseek-ai/dsh-typert-registry', 'afos-native-reader'), row('@deepseek-ai/dsh-api-gateway', 'afos-native-reader'),
         row('workdsh-provider-enterprise-profile/native-reader-capture', 'afos-native-reader')] } as typeof rows[number]);
   }
+  if (nativeCaller) {
+    if (typeof nativeCaller.assertRequest !== 'function') throw new EnterpriseProfileError('afos/native-read-denied');
+    const isolated = ['commands', 'attachments', 'fs', 'agentDefaultModel', 'sessionQuery', 'workspaceRegistry',
+      'fileReferences', 'fileUploads', 'sessionController', 'sessionFileReferences', 'sessionSkillCatalog', 'afosOwnedNativeRead',
+      'afosOwnedNativeMuxRead', 'afosNativePrivateController', 'afosNativePrivateReader', 'llm', 'agentPresets'];
+    rows.push({ id: 'afos-native-loader-bridge', name: require.resolve('workdsh-provider-enterprise-profile/native-ws-bridge'), config: { workspace: nativeWorkspace } });
+    rows.push({ id: 'afos-native-http-caller-proof', name: require.resolve('workdsh-provider-enterprise-profile/native-ws-http-admission') });
+    rows.push({ id: 'afos-owned-original-native-mux', name: require.resolve('@deepseek-ai/cordis-plugin-group'), group: true,
+      isolate: { connection: true, typertGateway: true, typert: true, webServer: true, ...Object.fromEntries(isolated.map(name => [name, true])) },
+      config: ['@deepseek-ai/dsh-typert-registry', 'workdsh-provider-enterprise-profile/native-ws-connection', '@deepseek-ai/dsh-api-gateway',
+        'workdsh-provider-enterprise-profile/native-ws-admission', 'workdsh-provider-enterprise-profile/native-ws-facade',
+        'workdsh-provider-enterprise-profile/native-ws-capture'].map((name, index) => ({ id: 'afos-native-mux-' + index, name: require.resolve(name) })) } as typeof rows[number]);
+  }
   const filename = join(options.root, `afos-core-${randomUUID()}.json`);
   const descriptor = openSync(filename, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0), 0o600);
   try { writeFileSync(descriptor, JSON.stringify(rows)); fsyncSync(descriptor); } finally { closeSync(descriptor); }
@@ -104,8 +132,13 @@ async function bootCore(options: EnterpriseAssemblyOptions, nativeReads: boolean
   let ctx: Context | undefined;
   try {
     ctx = await boot('afos-enterprise', filename, [], root => {
-      root.provide('afosMainBusiness', options.business); root.provide('afosIdentityAuthority', identity);
+      rootOwner = root; root.provide('afosMainBusiness', options.business); root.provide('afosIdentityAuthority', identity);
       if (nativeReads) root.provide('afosNativeAssemblyCapture', nativeCaptures);
+      if (nativeCaller) {
+        root.provide('afosNativeCallerProof', nativeCaller);
+        root.inject(['webServer'], owner => { owner.provide('afosNativeParentWebServer', owner.webServer); });
+        root.inject(['connection'], owner => { owner.provide('afosNativeParentConnection', owner.connection); });
+      }
     }, import.meta.url);
     ctx.effect(() => () => { try { unlinkSync(filename); } catch { /* Already removed during a failed start. */ } }, 'afosGeneratedConfig');
     options.signal.throwIfAborted();
@@ -119,8 +152,10 @@ async function bootCore(options: EnterpriseAssemblyOptions, nativeReads: boolean
     }
     if (nativeReads) {
       if (!nativeController || !nativeReader) throw new EnterpriseProfileError('afos/native-read-denied');
-      await ctx.plugin(EnterpriseNativeReadBridge, { controller: nativeController, reader: nativeReader, workspace: nativeWorkspace });
+      if (!nativeCaller) await ctx.plugin(EnterpriseNativeReadBridge, { controller: nativeController, reader: nativeReader, workspace: nativeWorkspace });
       if (!ctx.get('afosNativeReadBridge')) throw new EnterpriseProfileError('afos/native-read-denied');
+      if (nativeCaller && (!nativeMux || nativeMux.get('connection')?.operator !== ctx.get('connection')?.operator
+        || nativeMux.get('webServer') === ctx.get('webServer') || !ctx.get('afosNativeHttpProof'))) throw new EnterpriseProfileError('afos/native-read-denied');
     }
     const cutoff = () => {
       identity.cutoff(); ctx?.get('workdshIdentity')?.cutoff(); ctx?.get('afosEnterpriseIngress')?.cutoff();

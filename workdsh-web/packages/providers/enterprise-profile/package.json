@@ -29,6 +29,30 @@
     "./native-reader-capture": {
       "types": "./dist/native-reader-capture.d.ts",
       "default": "./dist/native-reader-capture.js"
+    },
+    "./native-ws-admission": {
+      "types": "./dist/native-ws-admission.d.ts",
+      "default": "./dist/native-ws-admission.js"
+    },
+    "./native-ws-facade": {
+      "types": "./dist/native-ws-facade.d.ts",
+      "default": "./dist/native-ws-facade.js"
+    },
+    "./native-ws-capture": {
+      "types": "./dist/native-ws-capture.d.ts",
+      "default": "./dist/native-ws-capture.js"
+    },
+    "./native-ws-bridge": {
+      "types": "./dist/native-ws-bridge.d.ts",
+      "default": "./dist/native-ws-bridge.js"
+    },
+    "./native-ws-connection": {
+      "types": "./dist/native-ws-connection.d.ts",
+      "default": "./dist/native-ws-connection.js"
+    },
+    "./native-ws-http-admission": {
+      "types": "./dist/native-ws-http-admission.d.ts",
+      "default": "./dist/native-ws-http-admission.js"
     }
   },
   "files": [
@@ -40,7 +64,10 @@
     "REUSE.md",
     "NATIVE_READ_FORWARDING.md",
     "NATIVE_READ_FORWARDING.zh-CN.md",
-    "NATIVE_READ_FORWARDING.i18n.yaml"
+    "NATIVE_READ_FORWARDING.i18n.yaml",
+    "NATIVE_WS_CLIENT.md",
+    "NATIVE_WS_CLIENT.zh-CN.md",
+    "NATIVE_WS_CLIENT.i18n.yaml"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
