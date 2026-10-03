@@ -84,7 +84,8 @@ async function httpFor(f,cookie,endpoint,payload,options={}){
     body:JSON.stringify({type:'client-request',rpcId:'native-http-fixture',method:endpoint.split('?')[0],payload}),signal:options.signal});
 }
 async function httpUnary(f,cookie,endpoint,payload){
-  const response=await httpFor(f,cookie,endpoint,payload);assert.equal(response.status,200);
+  const proof=cookie?.includes('afos_fixture_native=approved')?cookie:cookie+'; afos_fixture_native=approved';
+  const response=await httpFor(f,proof,endpoint,payload);assert.equal(response.status,200);
   const envelope=await response.json();assert.equal(envelope.type,'server-response');return envelope.result;
 }
 function frames(ws){
@@ -206,10 +207,14 @@ test('AFOS-WS-07 unmodified published original Gateway Client becomes ready and 
   }
 });
 
-test('AFOS-WS-08 no selected Session refuses real initial upgrade; raw business calls remain available without Gateway readiness',async()=>{
+test('AFOS-WS-08 current Main caller establishes only cold empty readiness; Session reads still require selection',async()=>{
   const f=await composed({skipStart:true});try{
     const {cookie}=originalCookie(f);assert.equal(f.ctx().afosDraftRuntime.nativeSessionId(),undefined);assert.equal(f.ctx().agents.list().length,0);
-    await assert.rejects(socketFor(f,cookie+'; afos_fixture_native=approved'));
+    await assert.rejects(socketFor(f,cookie));
+    const cold=await socketFor(f,cookie+'; afos_fixture_native=approved');const coldNext=frames(cold);
+    try{open(cold,'cold-ready','$events',{args:{}});assert.equal((await coldNext()).value.type,'ready');
+      open(cold,'cold-list','session/list',{args:{_request:{}}});assert.equal((await coldNext()).type,'error');}
+    finally{await endSocket(cold);}
     const state=await httpUnary(f,cookie,'afos/drafts/state',{});assert.equal(state.ok,true);
     const start=await httpUnary(f,cookie,'afos/drafts/start',{sources:[f.ref],goal:'First business task before native readiness.',operationId:'native-initial-fixture'});
     assert.equal(start.ok,true,JSON.stringify(start));await f.ctx().agents.get(start.value.sessionId).whenIdle();
@@ -230,7 +235,7 @@ test('AFOS-WS-09 physical HTTP owned reads require original admission then the s
     assert.equal(f.calls.slice(before).filter(action=>action==='identity.current').length,0);
     for(const [endpoint,payload] of reads){const result=await httpUnary(f,cookie+'; afos_fixture_native=approved',endpoint,payload);assert.equal(result.ok,true,JSON.stringify(result));}
     const queried=await httpFor(f,cookie,'session/list?probe=1',{args:{_request:{}}});assert.equal(queried.status,403);await queried.arrayBuffer();
-    const escaped=await httpFor(f,cookie,'session/%6cist',{args:{_request:{}}});assert.equal(escaped.status,404);await escaped.arrayBuffer();
+    const escaped=await httpFor(f,cookie,'session/%6cist',{args:{_request:{}}});assert.equal(escaped.status,403);await escaped.arrayBuffer();
   }finally{await f.cleanup();}
 });
 

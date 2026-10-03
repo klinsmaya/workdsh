@@ -12,7 +12,7 @@ declare module '@deepseek-ai/cordis' {
   interface Context { afosNativeParentWebServer: WebServer; afosNativeCallerProof: NativeCallerProof; }
 }
 
-export interface NativeCallerGrant { readonly signal: AbortSignal; readonly expiresAt: number; }
+export interface NativeCallerGrant { readonly signal: AbortSignal; readonly expiresAt: number; assertFresh?(signal:AbortSignal):Promise<void>; close?():void; }
 export interface NativeCallerProof {
   /** Private Main-issued caller identity lifetime; never a renderer-supplied DTO. */
   assertRequest(request: ConnectionTrustRequest, signal: AbortSignal): Promise<NativeCallerGrant>;
@@ -41,7 +41,8 @@ export function bindCallerGrant(grant: NativeCallerGrant, signal: AbortSignal) {
   const combined = AbortSignal.any([signal, grant.signal, expiry.signal]);
   const timer = setTimeout(() => expiry.abort(), Math.max(1, grant.expiresAt - Date.now())); timer.unref();
   return { signal: combined, expiresAt: grant.expiresAt, assertCurrent() { combined.throwIfAborted(); if (Date.now() >= grant.expiresAt) throw new EnterpriseProfileError('afos/native-read-denied'); },
-    close() { clearTimeout(timer); expiry.abort(); } };
+    async assertFresh(caller:AbortSignal = combined) { combined.throwIfAborted(); if(Date.now()>=grant.expiresAt)throw new EnterpriseProfileError('afos/native-read-denied'); await grant.assertFresh?.(caller); combined.throwIfAborted(); if(Date.now()>=grant.expiresAt)throw new EnterpriseProfileError('afos/native-read-denied'); },
+    close() { clearTimeout(timer); expiry.abort(); grant.close?.(); } };
 }
 
 /** Policy capability over one original parent WebServer; creates no server or transport. */
@@ -84,19 +85,22 @@ export default class NativeWsAdmission extends Service {
           const callerSignal = AbortSignal.any([closed.signal, owner.#lifetime.signal]);
           callerSignal.throwIfAborted();
           proof = bindCallerGrant(await requestCallerProof(owner.ctx.afosNativeCallerProof, request, callerSignal), callerSignal);
-          proof.assertCurrent(); proof.signal.addEventListener('abort', cancel, { once: true });
+          proof.assertCurrent(); await proof.assertFresh(); proof.signal.addEventListener('abort', cancel, { once: true });
           proof.assertCurrent();
-          permit = await owner.ctx.afosNativeReadBridge.admitReadCarrier(proof.signal);
-          proof.assertCurrent(); permit.assertCurrent();
+          // Cold transport readiness has no Session content/authority. Each native
+          // invocation still acquires its exact fresh owned Session lease.
+          if(owner.ctx.get('afosDraftRuntime')?.nativeSessionId()!==undefined)
+            permit = await owner.ctx.afosNativeReadBridge.admitReadCarrier(proof.signal);
+          proof.assertCurrent(); permit?.assertCurrent();
           if (socket.destroyed || owner.#lifetime.signal.aborted) throw new EnterpriseProfileError('afos/native-read-denied');
-          permit.signal.addEventListener('abort', cancel, { once: true });
-          if (permit.signal.aborted) throw new EnterpriseProfileError('afos/native-read-denied');
+          permit?.signal.addEventListener('abort', cancel, { once: true });
+          if (permit?.signal.aborted) throw new EnterpriseProfileError('afos/native-read-denied');
           scope = await owner.ctx.afosNativeHttpProof.prepareCarrier(request, originalAdmission.peer, proof, cancel);
-          proof.assertCurrent(); permit.assertCurrent();
+          proof.assertCurrent(); permit?.assertCurrent();
           socket.removeListener('readable', probeClosed);
           // The unchanged original handler alone owns WebSocket negotiation/mux/pumping.
           await route.handler(request, socket, head);
-          proof.assertCurrent(); permit.assertCurrent();
+          await proof.assertFresh(); proof.assertCurrent(); permit?.assertCurrent();
         } catch {
           cleanup(); socket.destroy();
         }

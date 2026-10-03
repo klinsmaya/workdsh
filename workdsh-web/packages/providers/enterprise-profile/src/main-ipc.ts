@@ -1,4 +1,7 @@
 import { randomUUID } from 'node:crypto';
+import { parentCallerIpc, childCallerIpc } from './main-caller-ipc.js';
+import { finiteCallerRequest, type NativeCallerIssuer } from './native-caller-ipc.js';
+import type { NativeCallerProof } from './native-ws-admission.js';
 import { isAbsolute } from 'node:path';
 import type { ModelPolicy } from '@afos/model-adapter';
 import type { GatewayAuthoritySnapshot } from 'workdsh-contracts';
@@ -14,8 +17,9 @@ export interface MainIpcEndpoint {
   messages(listener: (message: unknown) => void): () => void;
   disconnected(listener: () => void): () => void;
 }
-export interface MainIpcBootstrap { readonly root: string; readonly model: ModelPolicy }
+export interface MainIpcBootstrap { readonly root: string; readonly model: ModelPolicy; readonly nativeCaller?: true }
 const METHODS = {
+  'caller.admit': ['request'], 'caller.assert': ['leaseId'], 'caller.release': ['leaseId'],
   'authority.current': [], 'state.refresh': [], 'materials.list': [],
   'material.read': ['ref'], 'run.authorize': ['refs','operationId'], 'run.release': ['runId'],
   'publication.prepare': ['runId','sessionId'], 'publication.ack': ['ticket'], 'publication.release': ['ticket'],
@@ -52,6 +56,8 @@ function validateArgs(name:Method,args:Record<string,unknown>):void {
   if('draftId' in args)businessId(args.draftId);
   if('ticket' in args)id(args.ticket);
   if('streamId' in args)id(args.streamId);
+  if('leaseId' in args)id(args.leaseId);
+  if(name==='caller.admit')finiteCallerRequest(args.request);
   if('content' in args)text(args.content,65536);
   if('refs' in args)sources(args.refs);
   if('operationId' in args)businessId(args.operationId);
@@ -71,7 +77,7 @@ function safeCode(error:unknown):string {
 interface ParentStream { readonly iterator:AsyncIterator<Uint8Array>; readonly abort:AbortController; busy:boolean; bytes:number; remainder:Uint8Array; }
 /** Main retains credentials, leases, durable drafts and current authority. Requires a real captured Host signal. */
 export async function attachMainBusinessIpc(endpoint:MainIpcEndpoint,business:MainBusinessCapabilities,
-  startSignal:AbortSignal,bootstrap:MainIpcBootstrap):Promise<{readonly generation:string; close():Promise<void>}> {
+  startSignal:AbortSignal,bootstrap:MainIpcBootstrap,callerIssuer?:NativeCallerIssuer):Promise<{readonly generation:string; close():Promise<void>}> {
   if(!(business.hostSignal instanceof AbortSignal)||!isAbsolute(bootstrap.root))denied();
   const model=policy(bootstrap.model),generation=randomUUID(),lifetime=new AbortController();
   const signal=AbortSignal.any([startSignal,business.hostSignal,lifetime.signal]); signal.throwIfAborted();
@@ -81,10 +87,11 @@ export async function attachMainBusinessIpc(endpoint:MainIpcEndpoint,business:Ma
   const assert=()=>{if(closed||signal.aborted)throw new MainIpcError('afos/main-ipc-cutoff');};
   const currentSnapshot=():MainSnapshot=>{const local=business.localState();return snapshot({revision:++revision,local:{project:{id:local.project.id,name:local.project.name},authority:local.authority,lastSyncAt:local.lastSyncAt},drafts:business.drafts().map(draftDto)});};
   const send=async(message:object)=>{assert();boundedJson(message);await endpoint.send(message);assert();};
+  const callers=parentCallerIpc(callerIssuer,business,signal,leaseId=>send({contractVersion:IPC_VERSION,kind:'caller-cutoff',generation,leaseId}));
   let releaseMessages=()=>{},releaseDisconnect=()=>{},startupDeadline:ReturnType<typeof setTimeout>|undefined;
   const close=async():Promise<void>=>{
     if(closed)return;closed=true;clearTimeout(startupDeadline);lifetime.abort(new MainIpcError('afos/main-ipc-cutoff'));
-    releaseMessages();releaseDisconnect();signal.removeEventListener('abort',cutoff);
+    releaseMessages();releaseDisconnect();signal.removeEventListener('abort',cutoff);callers.close();
     for(const call of pending.values())call.abort();pending.clear();
     for(const entry of leases.values()){clearTimeout(entry.timer);entry.lease.dispose();}leases.clear();
     for(const stream of streams.values()){stream.abort.abort();void stream.iterator.return?.().catch(()=>undefined);}streams.clear();
@@ -93,6 +100,7 @@ export async function attachMainBusinessIpc(endpoint:MainIpcEndpoint,business:Ma
   const cutoff=()=>{void close();};
   const perform=async(name:Method,args:Record<string,unknown>,caller:AbortSignal):Promise<unknown>=>{
     assert();caller.throwIfAborted();
+    if(name==='caller.admit'||name==='caller.assert'||name==='caller.release')return callers.perform(name,args,caller);
     const grant=await business.currentAuthority(caller);assert();caller.throwIfAborted();
     if(Date.parse(grant.expiresAt)<=Date.now())denied();
     if(name==='authority.current')return authority(grant);
@@ -164,7 +172,7 @@ export async function attachMainBusinessIpc(endpoint:MainIpcEndpoint,business:Ma
       if(base.kind==='hello'){
         record(input,['contractVersion','kind']);if(hello)denied();hello=true;
         const initial=await business.currentAuthority(signal);assert();
-        await send({contractVersion:IPC_VERSION,kind:'welcome',generation,bootstrap:{root:bootstrap.root,model,authority:authority(initial)},snapshot:currentSnapshot()});clearTimeout(startupDeadline);return;
+        await send({contractVersion:IPC_VERSION,kind:'welcome',generation,bootstrap:{root:bootstrap.root,model,authority:authority(initial),...(callerIssuer?{nativeCaller:true}:{})},snapshot:currentSnapshot()});clearTimeout(startupDeadline);return;
       }
       if(base.kind==='cancel'){
         record(input,['contractVersion','kind','generation','callId']);if(base.generation!==generation)denied();pending.get(integer(base.callId))?.abort();return;
@@ -196,7 +204,7 @@ export async function attachMainBusinessIpc(endpoint:MainIpcEndpoint,business:Ma
 interface Pending { readonly name:Method; readonly resolve:(value:unknown)=>void; readonly reject:(error:MainIpcError)=>void; readonly release:()=>void; }
 /** Child proxy exposes only fixed business operations; it never receives an OAuth/provider credential. */
 export async function connectMainBusinessIpc(endpoint:MainIpcEndpoint,startSignal:AbortSignal):Promise<{
-  readonly business:MainBusinessCapabilities;readonly bootstrap:MainIpcBootstrap;readonly authority:GatewayAuthoritySnapshot;readonly signal:AbortSignal;close():void;
+  readonly business:MainBusinessCapabilities;readonly nativeCaller:NativeCallerProof;readonly bootstrap:MainIpcBootstrap;readonly authority:GatewayAuthoritySnapshot;readonly signal:AbortSignal;close():void;
 }> {
   const lifetime=new AbortController(),signal=AbortSignal.any([startSignal,lifetime.signal]),epoch=Object.freeze({});
   let generation:string|undefined,current:MainSnapshot|undefined,sequence=0,closed=false;
@@ -204,22 +212,25 @@ export async function connectMainBusinessIpc(endpoint:MainIpcEndpoint,startSigna
   let resolveWelcome!:(value:{bootstrap:MainIpcBootstrap;authority:GatewayAuthoritySnapshot})=>void,rejectWelcome!:(error:MainIpcError)=>void;
   const welcome={promise:new Promise<{bootstrap:MainIpcBootstrap;authority:GatewayAuthoritySnapshot}>((resolve,reject)=>{resolveWelcome=resolve;rejectWelcome=reject;}),resolve:(value:{bootstrap:MainIpcBootstrap;authority:GatewayAuthoritySnapshot})=>resolveWelcome(value),reject:(error:MainIpcError)=>rejectWelcome(error)};
   const assert=()=>{if(closed||signal.aborted||!generation)throw new MainIpcError('afos/main-ipc-cutoff');};
+  let callers:ReturnType<typeof childCallerIpc>|undefined;
   let releaseMessages=()=>{},releaseDisconnect=()=>{};
   const close=()=>{
     if(closed)return;closed=true;lifetime.abort(new MainIpcError('afos/main-ipc-cutoff'));releaseMessages();releaseDisconnect();
     signal.removeEventListener('abort',close);for(const entry of pending.values()){entry.release();entry.reject(new MainIpcError('afos/main-ipc-cutoff'));}pending.clear();
-    current=undefined;welcome.reject(new MainIpcError('afos/main-ipc-cutoff'));
+    callers?.close();current=undefined;welcome.reject(new MainIpcError('afos/main-ipc-cutoff'));
   };
   const accept=(input:unknown)=>{
     try{
-      boundedJson(input);const base=record(input,['contractVersion','kind'],['generation','bootstrap','snapshot','callId','method','ok','value','code']);
+      boundedJson(input);const base=record(input,['contractVersion','kind'],['generation','bootstrap','snapshot','callId','method','ok','value','code','leaseId']);
       if(base.contractVersion!==IPC_VERSION)denied();
       if(base.kind==='welcome'){
         const v=record(input,['contractVersion','kind','generation','bootstrap','snapshot']);if(generation||closed)denied();
-        const init=record(v.bootstrap,['root','model','authority']),root=text(init.root,4096);if(!isAbsolute(root))denied();
+        const init=record(v.bootstrap,['root','model','authority'],['nativeCaller']),root=text(init.root,4096);if(!isAbsolute(root))denied();
+        if(init.nativeCaller!==undefined&&init.nativeCaller!==true)denied();
         const initial=authority(init.authority);if(Date.parse(initial.expiresAt)<=Date.now())denied();
-        generation=id(v.generation);current=snapshot(v.snapshot);welcome.resolve({bootstrap:Object.freeze({root,model:policy(init.model)}),authority:initial});return;
+        generation=id(v.generation);current=snapshot(v.snapshot);welcome.resolve({bootstrap:Object.freeze({root,model:policy(init.model),...(init.nativeCaller===true?{nativeCaller:true as const}:{})}),authority:initial});return;
       }
+      if(base.kind==='caller-cutoff'){record(input,['contractVersion','kind','generation','leaseId']);assert();if(base.generation!==generation)denied();callers?.cutoff(base.leaseId);return;}
       if(base.kind==='cutoff'){record(input,['contractVersion','kind','generation']);if(base.generation!==generation)denied();close();return;}
       assert();if(base.generation!==generation||base.kind!=='reply')denied();
       const callId=integer(base.callId);if(cancelled.has(callId)){cancelled.delete(callId);return;}
@@ -249,6 +260,7 @@ export async function connectMainBusinessIpc(endpoint:MainIpcEndpoint,startSigna
       void endpoint.send({contractVersion:IPC_VERSION,kind:'request',generation,callId,method:name,args}).catch(()=>{abort();close();});
     }).then(value=>{assert();caller.throwIfAborted();return value;});
   };
+  callers=childCallerIpc(call,signal);
   const cached=()=>{assert();if(!current)denied();return current;};
   const freshSource=async(value:Promise<unknown>):Promise<EnterpriseSourceRef&{readonly text:string}>=>{
     const v=record(await value,['materialId','revisionId','sha256','text']);return Object.freeze({...source({materialId:v.materialId,revisionId:v.revisionId,sha256:v.sha256}),text:text(v.text)});
@@ -297,5 +309,5 @@ export async function connectMainBusinessIpc(endpoint:MainIpcEndpoint,startSigna
       }finally{if(!closed)try{await call('model.close',{streamId},signal);}catch{/* A completed stream is already closed; no retry of model writes. */}}
     },
   };
-  return Object.freeze({business:Object.freeze(business),bootstrap:initialized.bootstrap,authority:initialized.authority,signal,close});
+  return Object.freeze({business:Object.freeze(business),nativeCaller:callers.proof,bootstrap:initialized.bootstrap,authority:initialized.authority,signal,close});
 }

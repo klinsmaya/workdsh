@@ -33,8 +33,9 @@ export default class NativeWsFacade extends Service {
   private async unary(endpoint: string, payload: unknown, signal?: AbortSignal) {
     const invocation = this.ctx.invocation; if (!invocation) throw unavailable();
     const proof = this.ctx.afosNativeHttpProof.carrierProof(invocation.peer);
+    await proof.assertFresh();
     const result = await this.ctx.afosNativeReadBridge.invoke(endpoint, payload, AbortSignal.any([signal ?? invocation.signal, proof.signal]));
-    proof.assertCurrent();
+    await proof.assertFresh(); proof.assertCurrent();
     if (!result.ok) throw unavailable(); return result.value;
   }
   list(request: SessionListRequest, signal?: AbortSignal) { return this.unary('session/list', { args: { _request: request } }, signal); }
@@ -44,11 +45,13 @@ export default class NativeWsFacade extends Service {
     const invocation = this.ctx.invocation; if (!invocation) throw unavailable();
     const proof = this.ctx.afosNativeHttpProof.carrierProof(invocation.peer);
     const signal = AbortSignal.any([callerSignal ?? invocation.signal, proof.signal]);
+    // Caller/frame proof must fail before an owned read asks Main enterprise authority.
+    await proof.assertFresh(); proof.assertCurrent();
     const permit = await this.ctx.afosNativeReadBridge.admitReadCarrier(signal);
     try {
-      proof.assertCurrent(); permit.assertCurrent();
+      await proof.assertFresh(); proof.assertCurrent(); permit.assertCurrent();
       const source = await this.ctx.afosNativeReadBridge.open(endpoint, payload, signal, (async function* () {})());
-      for await (const value of source) { proof.assertCurrent(); permit.assertCurrent(); yield value; }
+      for await (const value of source) { await proof.assertFresh(); proof.assertCurrent(); permit.assertCurrent(); yield value; }
     } finally { permit.close(); }
   }
   follow(request: SessionFollowRequest, signal?: AbortSignal): AsyncIterable<unknown> {

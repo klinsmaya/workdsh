@@ -78,6 +78,10 @@
       "types": "./dist/cli-profile.d.ts",
       "default": "./dist/cli-profile.js"
     },
+    "./cli-native-owner": {
+      "types": "./dist/cli-native-owner.d.ts",
+      "default": "./dist/cli-native-owner.js"
+    },
     "./local-drafts": {
       "types": "./dist/local-drafts.d.ts",
       "default": "./dist/local-drafts.js"
@@ -99,7 +103,8 @@
     "MAIN_IPC.md",
     "MAIN_IPC.zh-CN.md",
     "MAIN_IPC.i18n.yaml",
-    "ADR_CLI_PROVIDER.md"
+    "ADR_CLI_PROVIDER.md",
+    "ADR_MAIN_CALLER_PROOF.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",

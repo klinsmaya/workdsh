@@ -9,6 +9,7 @@ import { assertFixedEnterpriseComposition, ENTERPRISE_TOOL_NAMES } from './profi
 import type {} from './authority-service.js';
 import { NATIVE_READ_ENDPOINTS } from './native-reads.js';
 import type { PeerScope } from '@deepseek-ai/dsh-typert-protocol';
+import { captureRpcCaller, type RpcCallerGuard } from './rpc-caller-guard.js';
 
 export interface SourceIdentity { readonly materialId: string; readonly revisionId: string; readonly sha256: string }
 export interface PinnedSnapshot extends SourceIdentity { readonly text: string }
@@ -154,13 +155,15 @@ export class EnterpriseProfileIngress extends Service {
     original.throwIfAborted(); identity.assertCurrentActor(actor);
     return { actor, signal: AbortSignal.any([original, identity.actorSignal(actor)]) };
   }
-  private async readSnapshot(sessionId: string, value: unknown, original: AbortSignal): Promise<PinnedSnapshot> {
+  private async readSnapshot(sessionId: string, value: unknown, original: AbortSignal, caller?: RpcCallerGuard): Promise<PinnedSnapshot> {
     args(value, ['materialId', 'revisionId']);
     if (!bounded(value.materialId) || !bounded(value.revisionId)) throw new EnterpriseProfileError('afos/profile-invalid-source');
     // This check is inside the definition-owned body, after every asynchronous around wrapper.
     const { actor, signal } = await this.admit(sessionId, original);
+    await caller?.assertFresh(); caller?.assertCurrent();
     this.ctx.afosProfileAuthority.identity.assertCurrentActor(actor); signal.throwIfAborted();
     const result = await this.ctx.afosProfileBridge.readPinnedSnapshot(sessionId, { materialId: value.materialId, revisionId: value.revisionId }, signal);
+    await caller?.assertFresh(); caller?.assertCurrent();
     signal.throwIfAborted(); this.ctx.afosProfileAuthority.identity.assertCurrentActor(actor);
     args(result, ['materialId', 'revisionId', 'sha256', 'text']);
     source({ materialId: result.materialId, revisionId: result.revisionId, sha256: result.sha256 });
@@ -168,47 +171,51 @@ export class EnterpriseProfileIngress extends Service {
       || createHash('sha256').update(result.text).digest('hex') !== result.sha256) throw new EnterpriseProfileError('afos/profile-invalid-snapshot');
     return result;
   }
-  private async renderDraft(sessionId: string, value: unknown, original: AbortSignal): Promise<PreparedDraft> {
+  private async renderDraft(sessionId: string, value: unknown, original: AbortSignal, caller?: RpcCallerGuard): Promise<PreparedDraft> {
     args(value, ['text', 'sources']);
     if (typeof value.text !== 'string' || !value.text.trim() || Buffer.byteLength(value.text) > 64 * 1024
       || !Array.isArray(value.sources) || !value.sources.length || value.sources.length > 32) throw new EnterpriseProfileError('afos/profile-invalid-draft');
     for (const item of value.sources) source(item);
     const { actor, signal } = await this.admit(sessionId, original);
+    await caller?.assertFresh(); caller?.assertCurrent();
     this.ctx.afosProfileAuthority.identity.assertCurrentActor(actor); signal.throwIfAborted();
     const result = await this.ctx.afosProfileBridge.prepareDraft(sessionId, value.text, value.sources as SourceIdentity[], signal);
+    await caller?.assertFresh(); caller?.assertCurrent();
     signal.throwIfAborted(); this.ctx.afosProfileAuthority.identity.assertCurrentActor(actor);
     args(result, ['text', 'sources', 'status']);
     if (result.status !== 'local-draft' || result.text !== value.text || JSON.stringify(result.sources) !== JSON.stringify(value.sources)) throw new EnterpriseProfileError('afos/profile-invalid-draft-result');
     return result;
   }
   private async rpc(endpoint: string, payload: unknown, callerSignal: AbortSignal): Promise<ConnectionRpcHandlerResult> {
-    const signal = AbortSignal.any([callerSignal, this.#lifetime.signal]);
+    let signal = AbortSignal.any([callerSignal, this.#lifetime.signal]);
     try {
+      const caller = captureRpcCaller(this.ctx, signal); signal = caller.signal;
+      await caller.assertFresh();
       signal.throwIfAborted();
       if (NATIVE_READ_ENDPOINTS.includes(endpoint as typeof NATIVE_READ_ENDPOINTS[number])) {
         const bridge = this.ctx.get('afosNativeReadBridge');
         if (!bridge) throw new EnterpriseProfileError('afos/profile-endpoint-denied');
-        return await bridge.invoke(endpoint, payload, signal);
+        return await caller.complete(await bridge.invoke(endpoint, payload, signal));
       }
       if (endpoint.startsWith('afos/drafts/')) {
         const runtime = this.ctx.get('afosDraftRuntime');
         if (!runtime) throw new EnterpriseProfileError('afos/profile-desktop-integration-unverified');
-        return await runtime.invoke(endpoint, payload, signal);
+        return await caller.complete(await runtime.invoke(endpoint, payload, signal));
       }
       if (!['afos/createSession', 'afos/readSnapshot', 'afos/renderDraft'].includes(endpoint)) throw new EnterpriseProfileError('afos/profile-endpoint-denied');
       if (Buffer.byteLength(JSON.stringify(payload) ?? '') > 80 * 1024) throw new EnterpriseProfileError('afos/profile-request-too-large');
       if (endpoint === 'afos/createSession') {
         args(payload, []);
-        await this.ctx.afosProfileAuthority.identity.resolve(undefined, signal);
-        const result = await this.ctx.afosProfileBridge.createSession(signal); signal.throwIfAborted();
+        await caller.wait(() => this.ctx.afosProfileAuthority.identity.resolve(undefined, signal));
+        const result = await caller.wait(() => this.ctx.afosProfileBridge.createSession(signal)); signal.throwIfAborted();
         args(result, ['sessionId']); if (!bounded(result.sessionId)) throw new EnterpriseProfileError('afos/profile-invalid-session');
-        await this.admit(result.sessionId, signal); return { ok: true, value: result };
+        await caller.wait(() => this.admit(result.sessionId, signal)); return await caller.complete({ ok: true, value: result });
       }
       args(payload, ['sessionId', 'request']);
       if (!bounded(payload.sessionId)) throw new EnterpriseProfileError('afos/profile-invalid-session');
-      const value = endpoint === 'afos/readSnapshot' ? await this.readSnapshot(payload.sessionId, payload.request, signal)
-        : await this.renderDraft(payload.sessionId, payload.request, signal);
-      return { ok: true, value };
+      const value = endpoint === 'afos/readSnapshot' ? await this.readSnapshot(payload.sessionId, payload.request, signal, caller)
+        : await this.renderDraft(payload.sessionId, payload.request, signal, caller);
+      return await caller.complete({ ok: true, value });
     } catch (error) {
       const code = signal.aborted ? 'afos/profile-cancelled' : error instanceof EnterpriseProfileError ? error.code : 'afos/profile-operation-failed';
       return { ok: false, error: { code, message: 'AFOS enterprise operation was refused.', details: {} } };

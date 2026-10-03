@@ -1,5 +1,6 @@
 import { Context, Service } from '@deepseek-ai/cordis';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { CALLER_HTTP_PATHS } from './native-caller-ipc.js';
 import { bindCallerGrant, requestCallerProof } from './native-ws-admission.js';
 import type { ConnectionTrustRequest } from '@deepseek-ai/dsh-client-connection';
 import type { PeerScope } from '@deepseek-ai/dsh-typert-protocol';
@@ -36,7 +37,9 @@ export default class NativeHttpCallerProof extends Service {
     cancel: () => void): Promise<{ readonly peer: PeerScope; close(): Promise<void> }> => {
     if (this.#requests.has(request) || this.#lifetime.signal.aborted) throw new EnterpriseProfileError('afos/native-read-denied');
     admission.assertCurrent();
-    const proof = bindCallerGrant({ signal: AbortSignal.any([admission.signal, this.#lifetime.signal]), expiresAt: admission.expiresAt }, admission.signal);
+    const proof = bindCallerGrant({ signal: AbortSignal.any([admission.signal, this.#lifetime.signal]), expiresAt: admission.expiresAt,
+      assertFresh: signal => admission.assertFresh(signal),
+    }, admission.signal);
     let child: Context | undefined;
     const fiber = base.ctx.plugin({ name: 'afos-restrictive-caller-scope', apply(ctx: Context) { child = ctx.extend(); } });
     try { await fiber.await(); proof.assertCurrent(); if (!child) throw new EnterpriseProfileError('afos/native-read-denied'); }
@@ -65,7 +68,8 @@ export default class NativeHttpCallerProof extends Service {
       let pathname: string;
       try { pathname = new URL(request.url ?? '', 'http://127.0.0.1').pathname; }
       catch { response.writeHead(403); response.end(); return; }
-      if (!['/api/session/list', '/api/session/page', '/api/session/projections'].includes(pathname)) return next();
+      if (!CALLER_HTTP_PATHS.includes(pathname)) { response.writeHead(403); response.end(); return; }
+      if(request.method!=='POST'||request.url!==pathname){response.writeHead(403);response.end();return;}
       const admission = ctx.connection.admit(request);
       if ('rejection' in admission) { response.writeHead(admission.rejection); response.end(); return; }
       const closed = new AbortController();
@@ -75,8 +79,8 @@ export default class NativeHttpCallerProof extends Service {
       let proof: CallerLease | undefined;
       try {
         proof = bindCallerGrant(await requestCallerProof(ctx.afosNativeCallerProof, request, signal), signal);
-        proof.assertCurrent(); proof.signal.addEventListener('abort', cancel, { once: true }); proof.assertCurrent();
-        await this.#scope.run(proof, next); proof.assertCurrent();
+        proof.assertCurrent(); await proof.assertFresh(); proof.signal.addEventListener('abort', cancel, { once: true }); proof.assertCurrent();
+        await this.#scope.run(proof, next); await proof.assertFresh(); proof.assertCurrent();
       } catch {
         if (!response.headersSent && !response.destroyed) { response.writeHead(403); response.end(); }
         else response.destroy();

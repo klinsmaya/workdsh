@@ -3,6 +3,7 @@ import type { ProfileContext } from '@deepseek-ai/dsh-app-boot';
 import type { ModelPolicy } from '@afos/model-adapter';
 import type { EnterpriseBinding } from 'workdsh-contracts';
 import type { MainBusinessCapabilities } from './main-capabilities.js';
+import type { NativeCallerProof } from './native-ws-admission.js';
 import { connectMainBusinessIpc, type MainIpcEndpoint } from './main-ipc.js';
 import { EnterpriseProfileError, SnapshotIdentityAuthority } from './snapshot-authority.js';
 
@@ -15,6 +16,7 @@ export interface CliBootstrap {
   readonly projectId: string;
   readonly signal: AbortSignal;
   readonly business: MainBusinessCapabilities;
+  readonly nativeCaller?: NativeCallerProof;
 }
 declare module '@deepseek-ai/cordis' {
   interface Context { afosCliBootstrap: CliBootstrap; afosCliProfileReady: CliBootstrap; }
@@ -53,7 +55,7 @@ export async function apply(ctx: Context): Promise<void> {
     ctx.provide('afosMainBusiness', channel.business);
     ctx.provide('afosIdentityAuthority', identity);
     ctx.provide('afosCliBootstrap', Object.freeze({ root: channel.bootstrap.root, model: channel.bootstrap.model,
-      binding: channel.authority.binding, projectId: channel.authority.project.id, signal: channel.signal, business: channel.business }));
+      binding: channel.authority.binding, projectId: channel.authority.project.id, signal: channel.signal, business: channel.business,...(channel.bootstrap.nativeCaller?{nativeCaller:channel.nativeCaller}:{}) }));
     channel.signal.throwIfAborted();
     // Return ACTIVE before the next plugin awaits Identity. A LOADING provider's
     // own injected child can return PENDING; it is not an initialization barrier.

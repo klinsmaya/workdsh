@@ -15,6 +15,7 @@ import { EnterpriseProfileError } from './snapshot-authority.js';
 import { ENTERPRISE_TOOL_NAMES } from './profile-policy.js';
 import './authority-service.js';
 import type {} from './native-reads.js';
+import { captureRpcCaller, type RpcCallerGuard } from './rpc-caller-guard.js';
 
 export interface RuntimeConfig { readonly model: ModelPolicy }
 function fail(): never { throw new EnterpriseProfileError('afos/drafts-operation-denied'); }
@@ -154,56 +155,69 @@ export class EnterpriseDraftRuntime extends Service {
     id(draftId); const result = this.ctx.afosMainBusiness.drafts().find(draft => draft.draftId === draftId);
     if (!result) fail(); return result;
   }
-  private async state(): Promise<EnterpriseDraftState> {
+  private async state(caller: RpcCallerGuard): Promise<EnterpriseDraftState> {
     if (!this.#offline) {
-      try { await this.ctx.afosMainBusiness.currentAuthority(this.signal()); await this.ctx.afosMainBusiness.asyncAccess?.refreshLocalState(this.signal()); }
+      try {
+        await caller.wait(() => this.ctx.afosMainBusiness.currentAuthority(caller.signal));
+        if (this.ctx.afosMainBusiness.asyncAccess) await caller.wait(() => this.ctx.afosMainBusiness.asyncAccess!.refreshLocalState(caller.signal));
+      }
       catch (error) {
+        caller.assertCurrent();
         const local = this.ctx.afosMainBusiness.localState();
         if (local.authority !== 'offline') throw error;
         this.#offline = true;
         this.#active?.cancel({ kind: 'hook', reason: 'afos-authority-offline' });
       }
     }
-    const local = this.ctx.afosMainBusiness.localState(); this.#lastSyncAt = local.lastSyncAt;
+    caller.assertCurrent();
+    const local = this.ctx.afosMainBusiness.localState(); caller.assertCurrent(); this.#lastSyncAt = local.lastSyncAt;
     return Object.freeze({ contractVersion: 'afos.drafts.v1', project: Object.freeze({ id: local.project.id, name: local.project.name }),
       authority: this.#offline ? 'offline' : local.authority, lastSyncAt: this.#lastSyncAt, drafts: Object.freeze(this.ctx.afosMainBusiness.drafts().map(draftView)) });
   }
-  private async start(value: unknown, callerSignal: AbortSignal): Promise<EnterpriseDraftView> {
+  private async start(value: unknown, caller: RpcCallerGuard): Promise<EnterpriseDraftView> {
     exact(value, ['sources', 'goal', 'operationId']); id(value.operationId);
     if (!Array.isArray(value.sources) || !value.sources.length || value.sources.length > 32 || typeof value.goal !== 'string'
       || !value.goal.trim() || Buffer.byteLength(value.goal) > 16 * 1024 || this.#starting || this.#active) fail();
     for (const ref of value.sources) source(ref);
     if (new Set(value.sources.map(ref => JSON.stringify([ref.materialId, ref.revisionId]))).size !== value.sources.length) fail();
-    const signal = this.signal(callerSignal); this.#starting = true;
+    const refs = value.sources, operationId = value.operationId;
+    const signal = caller.signal; caller.assertCurrent(); this.#starting = true;
     let handle: AgentHandle | undefined, lease: MainSessionBindingLease | undefined, runId: string | undefined;
     try {
-      for (const ref of value.sources) await this.ctx.afosMainBusiness.readRevision(ref, signal);
-      const run = await this.ctx.afosMainBusiness.authorize(value.sources, value.operationId, signal);
-      runId = run.runId;
+      for (const ref of refs) await caller.wait(() => this.ctx.afosMainBusiness.readRevision(ref, signal));
+      const run = await caller.wait(async () => {
+        const admitted = await this.ctx.afosMainBusiness.authorize(refs, operationId, signal);
+        // Capture an already-dispatched admission before checking a late reply.
+        // Cleanup releases that admission; it does not pretend the Run never existed.
+        runId = admitted.runId; return admitted;
+      });
       const sessionId = SessionId(randomUUID());
       const native = this.ctx.get('afosNativeReadBridge');
-      handle = await this.ctx.agents.create({ sessionId, meta: { agentPreset: 'afos-fixed', ...(native ? { cwd: native.workspace } : {}) }, signal,
+      handle = await caller.wait(async () => { handle = await this.ctx.agents.create({ sessionId, meta: { agentPreset: 'afos-fixed', ...(native ? { cwd: native.workspace } : {}) }, signal,
         agentOptions: { provider: this.#policy.provider, model: this.#policy.model, maxTokens: this.#policy.maxTokens },
         setup: async (agentCtx) => {
-          await this.ctx.agentPresets.mount(agentCtx, 'afos-fixed');
+          await caller.wait(() => this.ctx.agentPresets.mount(agentCtx, 'afos-fixed'));
+          caller.assertCurrent();
           agentCtx.tools.restrict({ allow: [...ENTERPRISE_TOOL_NAMES] });
           const skills = agentCtx.get('skills'), systemPrompt = agentCtx.get('systemPrompt');
           if (!skills || !systemPrompt) fail();
-          const skill = await skills.get('afos-material-draft', { scope: scopeOf(agentCtx), signal });
+          const skill = await caller.wait(() => skills.get('afos-material-draft', { scope: scopeOf(agentCtx), signal }));
           if (!skill) fail();
           systemPrompt.section({ name: 'afos-fixed-skill', order: 10, text: renderSkillContent(skill), interpolate: false });
-          const actor = await this.ctx.afosProfileAuthority.identity.resolve({ sessionId: String(sessionId) }, signal);
-          await this.ctx.afosProfileAuthority.access.bindSession(actor, { sessionId: String(sessionId) }, signal);
-          lease = await this.ctx.afosMainBusiness.prepareSessionBinding(run.runId, String(sessionId), signal);
-          return { commit: () => { this.ctx.afosProfileAuthority.identity.assertCurrentActor(actor); signal.throwIfAborted(); lease!.commit(); } };
-        } });
+          const actor = await caller.wait(() => this.ctx.afosProfileAuthority.identity.resolve({ sessionId: String(sessionId) }, signal));
+          await caller.wait(() => this.ctx.afosProfileAuthority.access.bindSession(actor, { sessionId: String(sessionId) }, signal));
+          lease = await caller.wait(async () => { lease = await this.ctx.afosMainBusiness.prepareSessionBinding(run.runId, String(sessionId), signal); return lease; });
+          return { commit: () => { caller.assertCurrent(); this.ctx.afosProfileAuthority.identity.assertCurrentActor(actor); signal.throwIfAborted(); lease!.commit(); } };
+        } }); return handle; });
       if (!lease) fail();
-      await lease.acknowledge?.(signal); signal.throwIfAborted(); lease.assertReady?.();
+      if (lease.acknowledge) await caller.wait(() => lease!.acknowledge!(signal));
+      caller.assertCurrent(); signal.throwIfAborted(); lease.assertReady?.();
       this.#handles.set(String(sessionId), handle); this.#active = handle.agent; this.#publications.set(handle.agent, lease);
-      await this.ctx.afosMainBusiness.prepareDraft(String(sessionId), '', run.inputRefs, signal);
-      signal.throwIfAborted();
+      await caller.wait(() => this.ctx.afosMainBusiness.prepareDraft(String(sessionId), '', run.inputRefs, signal));
+      caller.assertCurrent(); signal.throwIfAborted();
       const draft = this.ctx.afosMainBusiness.drafts().find(item => item.sessionId === String(sessionId)); if (!draft) fail();
       const prompt = `${value.goal}\n\nAuthorized source references (material content must be read with the fixed tool):\n${JSON.stringify(run.inputRefs)}`;
+      await caller.assertFresh(); caller.assertCurrent();
       handle.agent.followup(createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: prompt }] }));
       const current = handle, publication = lease!;
       const task = current.agent.whenIdle().then(() => undefined).finally(async () => {
@@ -216,7 +230,7 @@ export class EnterpriseDraftRuntime extends Service {
       });
       this.#tasks.add(task); void task.catch(() => undefined);
       const view = draftView(draft);
-      this.#nativeSessionId = String(sessionId);
+      caller.assertCurrent(); this.#nativeSessionId = String(sessionId);
       return view;
     } catch (error) {
       if (handle) { handle.agent.cancel({ kind: 'hook', reason: 'afos-create-failed' }); await handle.dispose(); this.#handles.delete(String(handle.agent.session.id)); this.#publications.delete(handle.agent); if (this.#active === handle.agent) this.#active = undefined; }
@@ -227,35 +241,44 @@ export class EnterpriseDraftRuntime extends Service {
   }
   /** The existing Connection owner dispatches this exact finite table. No arbitrary method invocation. */
   invoke = async (endpoint: string, payload: unknown, callerSignal: AbortSignal): Promise<ConnectionRpcHandlerResult> => {
-    const signal = this.signal(callerSignal);
+    let signal = this.signal(callerSignal);
     try {
+      const caller = captureRpcCaller(this.ctx, signal); signal = caller.signal;
+      await caller.assertFresh();
       signal.throwIfAborted(); if (Buffer.byteLength(JSON.stringify(payload) ?? '') > ENTERPRISE_DRAFT_MAX_BYTES * 6 + 16 * 1024) fail();
       if (this.#offline && !['afos/drafts/state', 'afos/drafts/edit', 'afos/drafts/cancel'].includes(endpoint)) fail();
       let value: unknown;
-      if (endpoint === 'afos/drafts/state') { exact(payload, []); value = await this.state(); }
-      else if (endpoint === 'afos/drafts/materials') { exact(payload, []); value = await this.ctx.afosMainBusiness.materials(signal); }
-      else if (endpoint === 'afos/drafts/snapshot') { exact(payload, ['ref']); source(payload.ref); value = await this.ctx.afosMainBusiness.readRevision(payload.ref, signal); }
-      else if (endpoint === 'afos/drafts/start') value = await this.start(payload, signal);
+      if (endpoint === 'afos/drafts/state') { exact(payload, []); value = await caller.wait(() => this.state(caller)); }
+      else if (endpoint === 'afos/drafts/materials') { exact(payload, []); value = await caller.wait(() => this.ctx.afosMainBusiness.materials(signal)); }
+      else if (endpoint === 'afos/drafts/snapshot') { exact(payload, ['ref']); source(payload.ref); const ref = payload.ref; value = await caller.wait(() => this.ctx.afosMainBusiness.readRevision(ref, signal)); }
+      else if (endpoint === 'afos/drafts/start') value = await this.start(payload, caller);
       else if (endpoint === 'afos/drafts/edit') {
         exact(payload, ['draftId', 'content']); id(payload.draftId); this.own(payload.draftId);
         if (typeof payload.content !== 'string' || Buffer.byteLength(payload.content) > ENTERPRISE_DRAFT_MAX_BYTES) fail();
-        value = draftView(this.ctx.afosMainBusiness.asyncAccess ? await this.ctx.afosMainBusiness.asyncAccess.editDraft(payload.draftId, payload.content, signal) : this.ctx.afosMainBusiness.editDraft(payload.draftId, payload.content));
+        const draftId = payload.draftId, content = payload.content;
+        await caller.assertFresh(); caller.assertCurrent();
+        value = draftView(this.ctx.afosMainBusiness.asyncAccess ? await caller.wait(() => this.ctx.afosMainBusiness.asyncAccess!.editDraft(draftId, content, signal)) : this.ctx.afosMainBusiness.editDraft(draftId, content));
       } else if (endpoint === 'afos/drafts/cancel') {
         exact(payload, ['draftId']); id(payload.draftId); const draft = this.own(payload.draftId), handle = this.#handles.get(draft.sessionId);
         if (!handle || this.#active !== handle.agent) fail();
-        if (this.ctx.afosMainBusiness.asyncAccess) await this.ctx.afosMainBusiness.asyncAccess.markCancellation(draft.sessionId, false, signal); else this.ctx.afosMainBusiness.markCancellation(draft.sessionId, false); handle.agent.cancel({ kind: 'user' });
-        await handle.agent.whenIdle(); await this.#projections.get(handle.agent); signal.throwIfAborted();
+        await caller.assertFresh(); caller.assertCurrent();
+        if (this.ctx.afosMainBusiness.asyncAccess) await caller.wait(() => this.ctx.afosMainBusiness.asyncAccess!.markCancellation(draft.sessionId, false, signal)); else this.ctx.afosMainBusiness.markCancellation(draft.sessionId, false);
+        caller.assertCurrent(); handle.agent.cancel({ kind: 'user' });
+        await caller.wait(() => handle.agent.whenIdle());
+        await caller.wait(async () => { await this.#projections.get(handle.agent); }); signal.throwIfAborted();
         // Child completion comes from the original turn/end projection, not a caller boolean.
+        caller.assertCurrent();
         if (!this.ctx.afosMainBusiness.asyncAccess) this.ctx.afosMainBusiness.markCancellation(draft.sessionId, true);
-        else await this.ctx.afosMainBusiness.asyncAccess.refreshLocalState(signal);
+        else await caller.wait(() => this.ctx.afosMainBusiness.asyncAccess!.refreshLocalState(signal));
         value = draftView(this.own(draft.draftId));
       } else if (endpoint === 'afos/drafts/archive') {
         exact(payload, ['draftId', 'expectedSha256']); id(payload.draftId); const draft = this.own(payload.draftId);
         if (typeof payload.expectedSha256 !== 'string' || !/^[a-f0-9]{64}$/u.test(payload.expectedSha256) || payload.expectedSha256 !== draft.sha256) fail();
         if (!draft.content.trim() || draft.localExecution === 'running' || draft.localExecution === 'local_queued' || draft.localExecution === 'cancel_requested') fail();
-        await this.ctx.afosMainBusiness.archiveFromUser(draft.draftId, payload.expectedSha256, signal); value = draftView(this.own(draft.draftId));
+        const expectedSha256 = payload.expectedSha256;
+        await caller.wait(() => this.ctx.afosMainBusiness.archiveFromUser(draft.draftId, expectedSha256, signal)); value = draftView(this.own(draft.draftId));
       } else fail();
-      signal.throwIfAborted(); return { ok: true, value };
+      signal.throwIfAborted(); return await caller.complete({ ok: true, value });
     } catch (error) {
       const code = signal.aborted ? 'afos/profile-cancelled' : error instanceof EnterpriseProfileError ? error.code : 'afos/drafts-operation-failed';
       return { ok: false, error: { code, message: 'AFOS enterprise operation was refused.', details: {} } };

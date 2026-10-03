@@ -1,4 +1,5 @@
 import { createRequire } from 'node:module';
+import { fixedNativeLoaderRows } from './native-loader-rows.js';
 import { fixedEnterpriseCoreRows, type CoreRowOptions } from './core-rows.js';
 
 /** Isolation is explicit for every business/Core service; true creates private labels. */
@@ -8,7 +9,7 @@ export const MANAGED_CLI_SCOPE_KEYS=Object.freeze([
   'afosDraftRuntime','afosEnterpriseIngress','storage','storage.backend.json','storageDomain','tools','sessions',
   'sessionProjections','sessionPersistence','llm','systemPrompt','agents','agentLoop','skills',
   'agentPresets','webServer','credentials','connection','typertGateway','fs','mcp','bash','ptc',
-  'settings','sessionController',
+  'settings','sessionController','afosNativeCallerProof','afosNativeAssemblyCapture','afosNativeParentWebServer','afosNativeParentConnection','afosNativePrivateController','afosNativePrivateReader','afosNativeReadBridge','afosNativeHttpProof',
 ]);
 /** Fixed zero-expression patch for an otherwise empty, Main-owned CLI Profile. */
 export function managedCliProfilePatch(options:CoreRowOptions){
@@ -24,6 +25,7 @@ export function managedCliProfilePatch(options:CoreRowOptions){
    {id:'afos-cli-bootstrap',name:require.resolve('workdsh-provider-enterprise-profile/cli-bootstrap')},
    {id:'afos-cli-identity',name:require.resolve('workdsh-provider-enterprise-profile/cli-ready')},
    ...core,
-   {id:'afos-cli-core',name:require.resolve('workdsh-provider-enterprise-profile/cli-core')},
+   ...(options.nativeCaller?[{id:'afos-cli-native-owner',name:require.resolve('workdsh-provider-enterprise-profile/cli-native-owner')},...fixedNativeLoaderRows(options,true).map(row=>({...row,inject:['afosCliProfileReady']}))]:[]),
+   {id:'afos-cli-core',name:require.resolve('workdsh-provider-enterprise-profile/cli-core'),...(options.nativeCaller?{inject:['afosNativeReadBridge','afosNativeHttpProof','afosNativeCallerProof','afosCliNativeReady']}:{})},
   ]}]}];
 }

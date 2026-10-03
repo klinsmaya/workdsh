@@ -11,6 +11,7 @@ export { fixedEnterpriseCoreRows } from './core-rows.js';
 import type { MainBusinessCapabilities } from './main-capabilities.js';
 import type { ModelPolicy } from '@afos/model-adapter';
 import './authority-service.js';
+import { fixedNativeLoaderRows } from './native-loader-rows.js';
 import { EnterpriseNativeReadBridge } from './native-reads.js';
 import type { SessionController } from '@deepseek-ai/dsh-api-session-controller';
 import type {} from './native-ws-bridge.js';
@@ -62,49 +63,7 @@ async function bootCore(options: EnterpriseAssemblyOptions, nativeReads: boolean
     reader(value) { if (nativeReader) throw new EnterpriseProfileError('afos/native-read-denied'); nativeReader = value; if(nativeCaller)rootOwner?.provide('afosNativePrivateReader',value); },
     mux(value) { if (nativeMux) throw new EnterpriseProfileError('afos/native-read-denied'); nativeMux = value; },
   };
-  if (nativeReads) {
-    managedDirectory(nativeWorkspace);
-    const row = (name: string, prefix: string, value?: unknown) => ({ id: prefix + '-' + name,
-      name: require.resolve(name), ...(value === undefined ? {} : { config: value }) });
-    const privateConnection = 'afos-owned-native-connection';
-    const closedWeb = 'afos-owned-native-web-absent';
-    const aliases = ['commands', 'attachments', 'fs', 'agentDefaultModel', 'sessionQuery', 'workspaceRegistry',
-      'fileReferences', 'fileUploads', 'sessionController', 'sessionFileReferences', 'sessionSkillCatalog'];
-    const nativeConfig: Record<string, unknown> = {
-      '@deepseek-ai/dsh-attachment-local': { dshHome: options.root, maxImageBytes: 65536, maxImagesPerMessage: 1, maxMessageImageBytes: 65536 },
-      '@deepseek-ai/dsh-fs-local': { cwd: nativeWorkspace },
-      '@deepseek-ai/dsh-agent-default-model': { provider: options.model.provider, model: options.model.model },
-      '@deepseek-ai/dsh-session-query-sqlite': { path: join(options.root, 'native-derived-index.db'), openAt: 'never' },
-      '@deepseek-ai/dsh-api-session-controller': { nativeOpen: false },
-    };
-    const controllerNames = ['@deepseek-ai/dsh-typert-registry', '@deepseek-ai/dsh-commands', '@deepseek-ai/dsh-attachment-local',
-      '@deepseek-ai/dsh-fs-local', '@deepseek-ai/dsh-agent-default-model', '@deepseek-ai/dsh-session-query-sqlite',
-      '@deepseek-ai/dsh-workspace', '@deepseek-ai/dsh-file-reference', '@deepseek-ai/dsh-client-file-upload', '@deepseek-ai/dsh-api-session-controller'];
-    rows.push({ id: 'afos-private-native-controller', name: require.resolve('@deepseek-ai/cordis-plugin-group'), group: true,
-      isolate: { connection: privateConnection, webServer: closedWeb, typertGateway: true, typert: true,
-        ...Object.fromEntries(aliases.map(name => [name, true])) },
-      config: [...controllerNames.map(name => row(name, 'afos-native-controller', nativeConfig[name])),
-        row('workdsh-provider-enterprise-profile/native-controller-capture', 'afos-native-controller')] } as typeof rows[number]);
-    rows.push({ id: 'afos-private-owned-native-reader', name: require.resolve('@deepseek-ai/cordis-plugin-group'), group: true,
-      isolate: { connection: privateConnection, webServer: closedWeb, typertGateway: true, typert: true,
-        llm: true, agentPresets: true, ...Object.fromEntries(aliases.map(name => [name, true])) },
-      config: [row('@deepseek-ai/dsh-client-connection', 'afos-native-reader', { maxRequestBodyBytes: 2 * 1048576, trustedHosts: [] }),
-        row('@deepseek-ai/dsh-typert-registry', 'afos-native-reader'), row('@deepseek-ai/dsh-api-gateway', 'afos-native-reader'),
-        row('workdsh-provider-enterprise-profile/native-reader-capture', 'afos-native-reader')] } as typeof rows[number]);
-  }
-  if (nativeCaller) {
-    if (typeof nativeCaller.assertRequest !== 'function') throw new EnterpriseProfileError('afos/native-read-denied');
-    const isolated = ['commands', 'attachments', 'fs', 'agentDefaultModel', 'sessionQuery', 'workspaceRegistry',
-      'fileReferences', 'fileUploads', 'sessionController', 'sessionFileReferences', 'sessionSkillCatalog', 'afosOwnedNativeRead',
-      'afosOwnedNativeMuxRead', 'afosNativePrivateController', 'afosNativePrivateReader', 'llm', 'agentPresets'];
-    rows.push({ id: 'afos-native-loader-bridge', name: require.resolve('workdsh-provider-enterprise-profile/native-ws-bridge'), config: { workspace: nativeWorkspace } });
-    rows.push({ id: 'afos-native-http-caller-proof', name: require.resolve('workdsh-provider-enterprise-profile/native-ws-http-admission') });
-    rows.push({ id: 'afos-owned-original-native-mux', name: require.resolve('@deepseek-ai/cordis-plugin-group'), group: true,
-      isolate: { connection: true, typertGateway: true, typert: true, webServer: true, ...Object.fromEntries(isolated.map(name => [name, true])) },
-      config: ['@deepseek-ai/dsh-typert-registry', 'workdsh-provider-enterprise-profile/native-ws-connection', '@deepseek-ai/dsh-api-gateway',
-        'workdsh-provider-enterprise-profile/native-ws-admission', 'workdsh-provider-enterprise-profile/native-ws-facade',
-        'workdsh-provider-enterprise-profile/native-ws-capture'].map((name, index) => ({ id: 'afos-native-mux-' + index, name: require.resolve(name) })) } as typeof rows[number]);
-  }
+  if(nativeReads) rows.push(...fixedNativeLoaderRows(options,Boolean(nativeCaller)) as typeof rows);
   const filename = join(options.root, `afos-core-${randomUUID()}.json`);
   const descriptor = openSync(filename, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0), 0o600);
   try { writeFileSync(descriptor, JSON.stringify(rows)); fsyncSync(descriptor); } finally { closeSync(descriptor); }

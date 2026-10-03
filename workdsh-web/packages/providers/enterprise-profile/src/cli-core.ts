@@ -10,7 +10,8 @@ export const inject=['appReady','afosCliProfileReady','storage','storageDomain',
 declare module '@deepseek-ai/cordis' { interface Context { afosCliCoreReady: CliBootstrap; } }
 /** All Core implementations remain original fixed Loader entries in this scope. */
 export function apply(ctx:Context):void {
- const ready=ctx.afosCliProfileReady;ready.signal.throwIfAborted();
+ const ready=ctx.afosCliProfileReady;
+ if(ready.nativeCaller&&(!ctx.get('afosNativeReadBridge')||!ctx.get('afosNativeHttpProof')||!ctx.get('afosCliNativeReady')))throw new EnterpriseProfileError('afos/cli-core-not-ready');ready.signal.throwIfAborted();
  for(const key of ['typertGateway','fs','mcp','bash','ptc','settings','sessionController']){
   if(ctx.get(key)!==undefined)throw new EnterpriseProfileError('afos/cli-core-not-ready');
  }
