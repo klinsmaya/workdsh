@@ -1,0 +1,119 @@
+{
+  "format": 1,
+  "name": "workdsh-fixed-runtime",
+  "version": "0.1.0-alpha.1",
+  "dshVersion": "0.1.7-rc.2",
+  "cordisVersion": "4.0.4",
+  "target": "linux-x64",
+  "sourceRevision": "5886f8ec0ad732d27c19b851009f1ed7794ca4ad",
+  "singletons": {
+    "@deepseek-ai/cordis": "4.0.4"
+  },
+  "node": {
+    "version": "24.21.0",
+    "url": "https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-x64.tar.gz",
+    "sha256": "6e1db87ef58b8819e5d5402eff1536491b18edd8eb7bee5ef7897876e88dc5ff"
+  },
+  "personalBundles": [
+    "workdsh-plugin-connectors",
+    "workdsh-plugin-experts",
+    "workdsh-plugin-library",
+    "workdsh-plugin-projects",
+    "workdsh-plugin-skills"
+  ],
+  "firstParty": {
+    "workdsh-provider-enterprise-profile": "workdsh-web/packages/providers/enterprise-profile",
+    "workdsh-provider-identity-nocobase": "workdsh-web/packages/providers/identity-nocobase",
+    "workdsh-plugin-enterprise-drafts": "workdsh-web/packages/plugins/enterprise-drafts",
+    "workdsh-enterprise-session-view": "workdsh-web/packages/plugins/enterprise-session-view",
+    "workdsh-contracts": "workdsh-web/packages/contracts",
+    "workdsh-ui": "workdsh-web/packages/ui",
+    "@afos/model-adapter": "enterprise/model-adapter",
+    "workdsh-provider-identity-local": "workdsh-web/packages/providers/identity-local",
+    "workdsh-provider-browser-session": "workdsh-web/packages/providers/browser-session",
+    "workdsh-plugin-audit": "workdsh-web/packages/plugins/audit",
+    "workdsh-plugin-access": "workdsh-web/packages/plugins/access",
+    "workdsh-plugin-skills": "workdsh-web/packages/plugins/skills",
+    "workdsh-plugin-experts": "workdsh-web/packages/plugins/experts",
+    "workdsh-plugin-connectors": "workdsh-web/packages/plugins/connectors",
+    "workdsh-plugin-activity": "workdsh-web/packages/plugins/activity",
+    "workdsh-plugin-office": "workdsh-web/packages/plugins/office",
+    "workdsh-plugin-library": "workdsh-web/packages/plugins/library",
+    "workdsh-plugin-projects": "workdsh-web/packages/plugins/projects",
+    "workdsh-bundle": "workdsh-web/packages/bundle",
+    "workdsh-plugin-workbench": "workdsh-web/packages/plugins/workbench"
+  },
+  "roots": {
+    "@deepseek-ai/dsh": "0.1.7-rc.2",
+    "@deepseek-ai/dsh-web-app": "0.1.7-rc.2",
+    "@deepseek-ai/dsh-persona": "0.1.7-rc.2",
+    "@deepseek-ai/cordis-plugin-group": "1.0.4",
+    "node-addon-require-builtin-linux-x64-gnu": "0.1.6",
+    "workdsh-provider-enterprise-profile": "0.1.0-alpha.1",
+    "workdsh-provider-identity-nocobase": "0.1.0-alpha.1",
+    "workdsh-plugin-enterprise-drafts": "0.1.0-alpha.1",
+    "workdsh-enterprise-session-view": "0.1.0",
+    "workdsh-contracts": "0.1.0-alpha.9",
+    "workdsh-ui": "0.1.0-alpha.7",
+    "@afos/model-adapter": "0.1.0-alpha.1",
+    "workdsh-provider-identity-local": "0.1.0-alpha.7",
+    "workdsh-provider-browser-session": "0.1.0-alpha.2",
+    "workdsh-plugin-audit": "0.1.0-alpha.6",
+    "workdsh-plugin-access": "0.1.0-alpha.7",
+    "workdsh-plugin-skills": "0.1.0-alpha.34",
+    "workdsh-plugin-experts": "0.1.0-alpha.9",
+    "workdsh-plugin-connectors": "0.1.0-alpha.4",
+    "workdsh-plugin-activity": "0.1.0-alpha.6",
+    "workdsh-plugin-office": "0.1.0-alpha.9",
+    "workdsh-plugin-library": "0.1.0-alpha.5",
+    "workdsh-plugin-projects": "0.1.0-alpha.4",
+    "workdsh-bundle": "0.1.0-alpha.53",
+    "workdsh-plugin-workbench": "0.1.0-alpha.12"
+  },
+  "publicEntries": [
+    "@deepseek-ai/dsh/lib/bin.js",
+    "@deepseek-ai/dsh-app-boot",
+    "@deepseek-ai/dsh-web-app",
+    "workdsh-provider-enterprise-profile/cli-profile",
+    "workdsh-provider-enterprise-profile/main-ipc",
+    "workdsh-provider-enterprise-profile/local-drafts",
+    "workdsh-provider-enterprise-profile/cli-bootstrap",
+    "workdsh-provider-enterprise-profile/cli-ready",
+    "workdsh-provider-enterprise-profile/cli-core"
+  ],
+  "resources": {
+    "workdsh-provider-enterprise-profile": [
+      "resources/skills/afos-material-draft/SKILL.md"
+    ]
+  },
+  "enterpriseActivation": {
+    "ingressValidated": false,
+    "sandbox": "unavailable"
+  },
+  "dynamicImportPolicy": [
+    {
+      "owner": "workdsh-provider-enterprise-profile",
+      "file": "dist/assembly.js",
+      "kind": "require.resolve",
+      "expression": "name",
+      "occurrences": 2,
+      "support": "Fixed original native-controller and mux package arrays; dependency/export resolution only. Production native caller proof and native branches are OPEN."
+    },
+    {
+      "owner": "workdsh-provider-enterprise-profile",
+      "file": "dist/core-rows.js",
+      "kind": "require.resolve",
+      "expression": "name",
+      "occurrences": 1,
+      "support": "Original public ENTERPRISE_HOST_PACKAGES fixed array; managed original CLI/Core real consumer tests. No user plugin configuration."
+    },
+    {
+      "owner": "workdsh-plugin-office",
+      "file": "dist/client.browser.js",
+      "kind": "dynamic-import",
+      "expression": "this.workerSrc",
+      "occurrences": 1,
+      "support": "OPEN: original PDF fallback worker URL is selected by browser runtime. This CLI artifact does not certify the Office PDF GUI worker resource/network path."
+    }
+  ]
+}
