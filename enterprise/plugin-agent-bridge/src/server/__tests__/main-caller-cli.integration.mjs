@@ -92,7 +92,8 @@ test('unmodified standard Gateway Client cold readiness uses Main proof before f
  let timer;await Promise.race([new Promise(resolve=>{let release;const check=()=>{if(client.connection.generation.getSnapshot()){release?.();resolve();}};release=client.connection.generation.subscribe(check);check();}),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('cold SDK ready unavailable')),2000);})]).finally(()=>clearTimeout(timer));
  assert.equal(client.connection.generation.getSnapshot().host.home,'');assert.equal((await f.unary('afos/drafts/state')).value.drafts.length,0);
  releaseRemote=await client.remote.$mount(remote.default);
- const list=await client.remote.session.list(json.parse('{}'),abort.signal);assert.equal(list.ok,false,'cold SDK readiness conveys no owned Session read');
+ const list=await client.remote.session.list(json.parse('{}'),abort.signal);assert.equal(list.ok,true);
+ assert.equal(JSON.stringify(list.value),'{"items":[]}','cold SDK readiness conveys an empty authorized catalog');
  const started=await f.unary('afos/drafts/start',{sources:[f.ref],goal:'Use the original Client cold entry.',operationId:'main-proof-cold-sdk'});assert.equal(started.ok,true,JSON.stringify(started));
  const follow=client.remote.session.follow(json.parse(JSON.stringify({address:{kind:'session',sessionId:started.value.sessionId},assistantStream:true,maxMessages:500})),abort.signal)[Symbol.asyncIterator]();iterators.push(follow);
  const snapshot=await follow.next();assert.equal(snapshot.value.type,'snapshot');assert.equal(snapshot.value.header.id,started.value.sessionId);assert.equal(f.tables.artifacts.size,0);
