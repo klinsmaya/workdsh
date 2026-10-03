@@ -11,8 +11,8 @@ client-only activity feature). It registers no Host capability or fake response.
 - Authorized tasks: D08/D09 UI slice. Source requirements: handoff
   `00_DOT_START_HERE.md`, `01_FULL_IMPLEMENTATION_PLAN.md`,
   `02_IMPLEMENTATION_TASKS.md`, `03_ACCEPTANCE_MATRIX.md`.
-- Public packages: pinned DSH `0.1.7-rc.2`; Cordis `4.0.3` follows the current
-  WorkDSH override. Official Connection `ClientConnectionRpc.call`, owner-gated
+- Public packages: pinned DSH `0.1.7-rc.2`; the first UI probe used Cordis `4.0.3`.
+  The reviewed current consumer uses exact Cordis `4.0.4`. Official Connection `ClientConnectionRpc.call`, owner-gated
   Slots `inject/register`, Layout, and `UiWorkspace.openSession` are reused.
 - Shared WorkDSH controls and Modal come from `workdsh-ui`. Component props derive
   from official `PropsRuntime<'main'>` and `InjectFace`; Context stays outside React.
@@ -26,6 +26,44 @@ client-only activity feature). It registers no Host capability or fake response.
   implementation baseline; target desktop visual validation remains NOT_RUN.
 
 ## Behavior and limits
+
+### Client readiness continuation / reuse decision
+
+The original public Connection generation observable, generated
+`remote.session.list`, source-labelled `SessionReference.ready/binding/release`
+and Session snapshot are the navigation authorities. `sessions.refresh()` and
+catalog READY may preserve an earlier cache after a failed read; they cannot
+alone authorize opening an owned Session. The navigation first waits the original
+generation, repulls the Main business selection, requires the actual fresh
+generated list result to contain that same selected draft Session, and waits the
+original Controller's own public refresh/catalog before allocating a binding.
+A direct generated result cannot populate that original catalog. It then waits
+the original reference's open attempt. It checks `openState === 'open'`, no error or
+removal, live binding identity and unchanged original generation/selection before
+the original Workspace synchronously retains the view. Its temporary reference
+then releases. The consumer label `enterpriseDraftNavigation` extends only the
+official Client reference accounting; it is not a new grant or execution owner.
+
+First ready emits the original reset, so an operation still awaiting its first
+generation may survive the temporary business invalidate only by waiting for a
+fresh Main projection of exactly the original project/draft/Session. Once bound,
+loss, replacement or reset cancels it. Offline/error, selection change,
+supersession, panel/module disposal, explicit cancel and a 30-second operation
+deadline also cancel. Waiting/cancel controls describe only this UI operation;
+the feature does not supply another generation source, Controller or transport.
+Both `remote` and `remote.session` are declared as public Cordis dependencies.
+
+Supporting tests cover these lifecycle races and a real headless Chromium graph
+using original frontend/ModuleSystem/Loader/Slots/SessionProvider/Conversation,
+physical original HTTP + WS and synthetic Main/caller/model fixtures. Delayed
+ready is released only after the real user opens the waiting UI; cancel, reset
+and revocation leave no view retention. Probe and earlier failed evidence are
+separately retained. This does not verify packaged Electron, production Renderer
+caller proof, the joint MainIPC + NativeWS carrier or target OS acceptance.
+Native composer/menu Slots can contribute a policy separately; this module does
+not claim complete read-only native presentation. The original Sidebar New
+Session action has no separate public disable Slot in rc.2; Host mutation refusal
+remains required. Cached native history can remain visible after generation loss.
 
 Select real material/revision/hash pins, inspect text snapshots, describe a goal,
 and create a draft through Main. Opening a draft uses the original Session view.
@@ -52,7 +90,7 @@ artifact uses the official ModuleLoader envelope. It must be included by the
 trusted enterprise Profile; it does not change the personal/default Profile.
 
 Acceptance IDs: AT-33/35/36/38/39/40/43/44. Package tests give supporting headless
-evidence only. Real model, IdP/NocoBase, GUI, Windows/macOS and P1G3 remain NOT_RUN
+evidence only. Real model, IdP/NocoBase, packaged GUI, Windows/macOS and P1G3 remain NOT_RUN
 or BLOCKED; this module does not authorize D13/D14 or production/external writes.
 
 Rollback: withdraw `workdsh-plugin-enterprise-drafts` from the trusted Profile and remove

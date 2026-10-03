@@ -21,26 +21,36 @@ import { archive, deferred, draft, facade, material, ref, sha, state } from './f
 async function receiveArtifact(url, imports, expectedId) {
   let declaration;
   const scope = { window: { __ModuleLoader__: { load(value) { assert.equal(declaration, undefined); declaration = value; } } }, AbortController, AbortSignal, crypto, TextEncoder, setTimeout, clearTimeout, console };
-  vm.runInNewContext(await readFile(url, 'utf8'), scope, { filename: expectedId });
+  const realm = vm.createContext(scope);
+  vm.runInContext(await readFile(url, 'utf8'), realm, { filename: expectedId });
   assert.equal(declaration.id, expectedId);
-  return declaration.factory(name => { assert.ok(Object.hasOwn(imports, name), `undeclared external ${name}`); return imports[name]; });
+  return { module: declaration.factory(name => { assert.ok(Object.hasOwn(imports, name), `undeclared external ${name}`); return imports[name]; }),
+    // Match the real original HTTP carrier's decoded JSON realm, rather than
+    // passing foreign-realm fixture object prototypes into strict DTO validation.
+    copy: value => vm.runInContext('JSON.parse', realm)(JSON.stringify(value)) };
 }
 test('published official SlotRegistry gates declarations, paired entries revoke on feature disposal', async () => {
-  const native = await receiveArtifact(new URL('../node_modules/@deepseek-ai/dsh-client-ui-renderer/lib/client.js', import.meta.url), {
+  const { module: native } = await receiveArtifact(new URL('../node_modules/@deepseek-ai/dsh-client-ui-renderer/lib/client.js', import.meta.url), {
     '@deepseek-ai/cordis': cordis, '@deepseek-ai/dsh-client-ui-slots': slots,
     react: React, 'react-dom': ReactDom, 'react-dom/client': ReactDomClient, 'react/jsx-runtime': Jsx,
   }, '@deepseek-ai/dsh-client-ui-renderer');
   // Client bundle consumes only the native atoms and React, with WorkDSH UI bundled.
-  const feature = await receiveArtifact(new URL('../dist/client.browser.js', import.meta.url), {
+  const { module: feature, copy } = await receiveArtifact(new URL('../dist/client.browser.js', import.meta.url), {
     '@deepseek-ai/dsh-client-ui-primitives': { Button: props => React.createElement('button', props), Input: props => React.createElement('input', props) },
     react: React, 'react-dom': ReactDom, 'react/jsx-runtime': Jsx,
   }, 'workdsh-plugin-enterprise-drafts');
   const ctx = new cordis.Context();
-  const releases = [], opened = [], calls = [], response = deferred(); let generationListener;
+  const releases = [], opened = [], calls = [], response = deferred(), listeners = new Set();
+  const generation = { id: 1, host: { home: '' } }; let slow = false;
   ctx.provide('connection', {
-    rpc: { async call(channel, endpoint, payload, signal) { calls.push({ channel, endpoint, payload, signal }); return response.promise; } },
-    generation: { getSnapshot: () => ({ id: 'fixture-generation' }), subscribe(listener) { generationListener = listener; return () => releases.push('generation'); } },
+    rpc: { async call(channel, endpoint, payload, signal) { calls.push({ channel, endpoint, payload, signal }); return slow ? response.promise : copy({ ok: true, value: endpoint.endsWith('materials') ? [material()] : state({ drafts: [draft()] }) }); } },
+    generation: { getSnapshot: () => generation, subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener); releases.push('generation'); }; } },
   });
+  const binding = { sessionId: 'session-A', session: { getSnapshot: () => ({ sessionId: 'session-A', openState: 'open', openError: null, removed: false }) } };
+  ctx.provide('sessions', { refresh: async () => {}, list: { getSnapshot: () => ({ phase: 'ready', ids: ['session-A'], byId: { 'session-A': { id: 'session-A' } } }), subscribe: () => () => {} }, binding: () => binding, retain: () => ({ binding, ready: Promise.resolve(binding), release: () => releases.push('reference') }) });
+  const remoteSession = { list: async () => ({ ok: true, value: { items: [{ sessionId: 'session-A' }] } }) };
+  ctx.provide('remote', { session: remoteSession });
+  ctx.provide('remote.session', remoteSession);
   ctx.provide('layout', { selectPanel: key => opened.push(['panel', key]), toggleSidebar: () => opened.push(['sidebar']) });
   ctx.provide('uiWorkspace', { openSession: sessionId => opened.push(['session', sessionId]) });
   await ctx.plugin(native.SlotRegistry);
@@ -57,11 +67,12 @@ test('published official SlotRegistry gates declarations, paired entries revoke 
   assert.equal(main[0].options.key, feature.panelKey); assert.equal(sidebar[0].options.id, feature.panelKey);
   assert.equal(registry.entries('root').length, 1);
   const injected = main[0].inject();
+  await injected.model.refresh();
   await injected.openSession('session-A'); assert.deepEqual(opened, [['session', 'session-A'], ['panel', null]]);
-  const model = injected.model; const refreshing = model.refresh(); assert.equal(calls.length, 1);
-  const active = calls[0].signal; await fiber.dispose(); assert.equal(active.aborted, true);
+  const model = injected.model; slow = true; const refreshing = model.refresh();
+  const active = calls.at(-1).signal; await fiber.dispose(); assert.equal(active.aborted, true);
   response.resolve({ ok: true, value: state({ drafts: [draft()] }) }); await refreshing;
-  assert.equal(model.getSnapshot().state, undefined); assert.equal(registry.entries('main').length, 0); assert.equal(registry.entries('sidebar.panellist').length, 0); assert.deepEqual(releases, ['generation']);
+  assert.equal(model.getSnapshot().state, undefined); assert.equal(registry.entries('main').length, 0); assert.equal(registry.entries('sidebar.panellist').length, 0); assert.equal(listeners.size, 0); assert.equal(releases.filter(x => x === 'reference').length, 1);
   assert.equal(registry.entries('root').length, 1); releaseOwner(); await ctx.fiber.dispose();
 });
 test('headless actual React panel escapes malicious material and draft text, shows receipt-only archive', async () => {

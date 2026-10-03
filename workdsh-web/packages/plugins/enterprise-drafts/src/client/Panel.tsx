@@ -5,6 +5,7 @@ import type { EnterpriseDraftView, EnterpriseSourceRef } from 'workdsh-contracts
 import { DraftPanelModel, canEdit, isActive, isArchived } from '../model.js';
 import { MAX_GOAL_LENGTH, MAX_TEXT_BYTES, sourceKey } from '../rpc.js';
 import { draftsCss } from './styles.js';
+import { NativeNavigationError } from '../navigation.js';
 
 export const executionLabels: Readonly<Record<EnterpriseDraftView['execution'], string>> = {
   local_queued: '本机等待执行', running: '原生会话执行中', cancel_requested: '已请求取消，等待停止确认',
@@ -15,7 +16,7 @@ export function archiveLabel(draft: EnterpriseDraftView): string {
 }
 export interface PanelInjected {
   readonly model: DraftPanelModel;
-  readonly openSession: (sessionId: string) => Promise<void>;
+  readonly openSession: (sessionId: string, signal?: AbortSignal) => Promise<void>;
   readonly toggleNavigation: () => void;
 }
 export type DraftPanelProps = PropsRuntime<'main'> & InjectFace<PanelInjected>;
@@ -40,16 +41,14 @@ function Editor({ draft, model, busy, current, openSession, onDirty }: {
   const [baseContent, setBaseContent] = React.useState(draft.content);
   const [baseHash, setBaseHash] = React.useState(draft.sha256);
   const [confirmHash, setConfirmHash] = React.useState<string>();
-  const [navigationError, setNavigationError] = React.useState(false);
   const dirty = content !== baseContent, changed = dirty && baseHash !== draft.sha256;
   React.useEffect(() => { if (!dirty) { setContent(draft.content); setBaseContent(draft.content); setBaseHash(draft.sha256); } }, [draft.content, draft.sha256, dirty]);
   React.useEffect(() => { onDirty(dirty); }, [dirty, onDirty]);
   const reload = () => { setContent(draft.content); setBaseContent(draft.content); setBaseHash(draft.sha256); };
   const save = async () => { const saved = await model.edit(draft.draftId, content); if (saved) { setContent(saved.content); setBaseContent(saved.content); setBaseHash(saved.sha256); } };
   return <section className="card" aria-label="草稿预览与编辑">
-    <div className="bar"><h2>草稿 · 待人工核对</h2><Button variant="outline" size="sm" disabled={busy || dirty} onClick={() => { setNavigationError(false); void openSession(draft.sessionId).catch(() => setNavigationError(true)); }}>打开原生会话</Button></div>
+    <div className="bar"><h2>草稿 · 待人工核对</h2><Button variant="outline" size="sm" disabled={busy || dirty || !current} onClick={() => { void openSession(draft.sessionId); }}>打开原生会话</Button></div>
     <p className="muted">AI 建议不能作为企业正式决定。本页支持纯文本预览和编辑。</p>
-    {navigationError && <p role="alert">原生会话暂未就绪，请稍后重试。</p>}
     <DraftDetails draft={draft} />
     <label className="field" htmlFor="afos-draft-editor">本地草稿正文</label>
     <Textarea id="afos-draft-editor" className="editor" value={content} maxLength={MAX_TEXT_BYTES} readOnly={!canEdit(draft)} disabled={busy} onChange={event => setContent(event.currentTarget.value)} />
@@ -76,11 +75,24 @@ export function EnterpriseDraftPanel({ model, openSession, toggleNavigation }: D
   const [goal, setGoal] = React.useState('');
   const [dirty, setDirty] = React.useState(false);
   const [selectConfirm, setSelectConfirm] = React.useState<string>();
-  const state = view.state, busy = !!view.pending, current = state?.authority === 'current';
+  const [opening, setOpening] = React.useState(false);
+  const [navigationError, setNavigationError] = React.useState<string>();
+  const navigationRequest = React.useRef<AbortController | undefined>(undefined);
+  const state = view.state, busy = !!view.pending || opening, current = state?.authority === 'current';
   const draft = state?.drafts.find(row => row.draftId === view.selectedDraftId);
   const setEditorDirty = React.useCallback((value: boolean) => setDirty(value), []);
   React.useEffect(() => { void model.refresh(); const timer = setInterval(() => void model.refresh(), 3000); return () => clearInterval(timer); }, [model]);
   React.useEffect(() => { setGoal(''); setDirty(false); setSelectConfirm(undefined); }, [state?.project.id]);
+  React.useEffect(() => () => { navigationRequest.current?.abort(new NativeNavigationError('cancelled')); navigationRequest.current = undefined; }, []);
+  const navigate = async (sessionId: string) => {
+    navigationRequest.current?.abort(new NativeNavigationError('cancelled'));
+    const request = new AbortController(); navigationRequest.current = request;
+    setOpening(true); setNavigationError(undefined);
+    try { await openSession(sessionId, request.signal); }
+    catch (error) {
+      if (navigationRequest.current === request && !request.signal.aborted) setNavigationError(error instanceof NativeNavigationError && error.code === 'changed' ? '会话或授权已变化，请刷新后重试。' : '原生会话暂未就绪，请稍后重试。');
+    } finally { if (navigationRequest.current === request) { navigationRequest.current = undefined; setOpening(false); } }
+  };
   const chooseDraft = (id: string) => { if (dirty && id !== draft?.draftId) setSelectConfirm(id); else model.selectDraft(id); };
   return <main className="afos-drafts" aria-label="企业草稿">
     <style>{controlsCss}{modalCss}{draftsCss}</style>
@@ -89,6 +101,8 @@ export function EnterpriseDraftPanel({ model, openSession, toggleNavigation }: D
     {view.pending && <div className="message" role="status">{view.pending === 'refresh' ? '正在刷新业务投影…' : '操作已提交，正在等待确认…'}</div>}
     {view.error && <div className="message" role="alert">{view.error}</div>}
     {view.notice && <div className="message" role="status">{view.notice}</div>}
+    {opening && <div className="message" role="status">正在等待原生会话就绪… <Button variant="outline" size="sm" onClick={() => { navigationRequest.current?.abort(new NativeNavigationError('cancelled')); }}>取消打开</Button></div>}
+    {navigationError && <div className="message" role="alert">{navigationError}</div>}
     {state?.authority === 'offline' && <p className="message">可查看和编辑本地草稿。企业新动作已停止；联网后请刷新授权，不会自动上传。</p>}
     {state && <div className="grid"><aside>
       <section className="card"><h2>授权资料版本</h2><p className="muted">明确选择本次任务可用的资料。每份输入固定到实际修订和摘要。</p>
@@ -98,7 +112,7 @@ export function EnterpriseDraftPanel({ model, openSession, toggleNavigation }: D
         <form onSubmit={event => { event.preventDefault(); if (!dirty) void model.start(goal); }}><label className="field" htmlFor="afos-draft-goal">本次草稿目标</label><Textarea id="afos-draft-goal" value={goal} maxLength={MAX_GOAL_LENGTH} disabled={busy || !current} placeholder="说明需要整理的内容与草稿要求" onChange={event => setGoal(event.currentTarget.value)} /><p className="small">已选 {view.selectedSources.length} 份资料 · 使用企业固定专家和 Skill</p><Button type="submit" disabled={busy || dirty || !current || !goal.trim() || !view.selectedSources.length || state.drafts.some(isActive)}>生成本地草稿</Button></form>
       </section>
       <section className="card"><h2>草稿与原生会话</h2>{!state.drafts.length && <p className="muted">尚无本地草稿。</p>}{state.drafts.map(row => <button type="button" className="draft-row" key={row.draftId} aria-current={row.draftId === draft?.draftId} disabled={busy} onClick={() => chooseDraft(row.draftId)}>{row.draftId}<div className="small">{executionLabels[row.execution]} · {archiveLabel(row)}</div><div className="small">{row.updatedAt}</div></button>)}</section>
-    </aside><div>{draft ? <Editor key={`${state.project.id}/${draft.draftId}`} draft={draft} model={model} busy={busy} current={current} openSession={openSession} onDirty={setEditorDirty} /> : <section className="card"><h2>草稿预览</h2><p className="muted">选择资料并生成草稿，或打开现有工作副本。</p></section>}</div></div>}
+    </aside><div>{draft ? <Editor key={`${state.project.id}/${draft.draftId}`} draft={draft} model={model} busy={busy} current={current} openSession={navigate} onDirty={setEditorDirty} /> : <section className="card"><h2>草稿预览</h2><p className="muted">选择资料并生成草稿，或打开现有工作副本。</p></section>}</div></div>}
     <Modal open={selectConfirm !== undefined} label="切换前放弃未保存编辑" className="afos-drafts-dialog" onClose={() => setSelectConfirm(undefined)}><h2>切换前核对编辑</h2><p>当前有未保存编辑。确认切换会放弃这些编辑；已保存的本地工作副本仍保留。</p><div className="actions"><Button variant="outline" onClick={() => setSelectConfirm(undefined)}>保留编辑</Button><Button disabled={busy} onClick={() => { const id = selectConfirm; setSelectConfirm(undefined); setDirty(false); if (id) model.selectDraft(id); }}>放弃未保存编辑并切换</Button></div></Modal>
   </main>;
 }
