@@ -13,7 +13,7 @@ import { NATIVE_CALLER_PROOF_TIMEOUT_MS } from '../../../../../workdsh-web/packa
 const policy = { provider: 'afos-managed', model: 'fixed-model', maxTokens: 64 };
 const idleModel = [{ type: 'finish', reason: { kind: 'stop' } }];
 async function composed(options = {}) {
-  let ctx;
+  let ctx, readDeadline;
   const f = await fixture({ response: options.response, stopHost: async () => { if (ctx) { const old=ctx;ctx=undefined;await old.fiber.dispose(); } },
     model: async () => idleModel });
   await f.ready(); f.capability({ ingressValidated: true, sandbox: 'full' });
@@ -34,6 +34,7 @@ async function composed(options = {}) {
         ...business,
         ownedSessionRead: async (sessionId, callerSignal) => {
           const grant = await business.ownedSessionRead(sessionId, callerSignal);
+          if(options.denyReadAfterMs){readDeadline??=Date.now()+options.denyReadAfterMs;if(Date.now()>=readDeadline)throw Error('fixture Session read authorization revoked');}
           return Object.freeze({ ...grant, expiresAt: new Date(Math.min(Date.parse(grant.expiresAt), Date.now() + options.expiryMs)).toISOString() });
         },
       } : business, model: policy, signal });
@@ -142,17 +143,16 @@ test('AFOS-WS-04 real Main denial before upgrade and revocation during caller-pr
   }finally{release();await f.cleanup();}
 });
 
-test('AFOS-WS-05 per-upgrade shortened real Main lease expires the actual socket including readiness and streams; fresh upgrade works',async()=>{
-  const f=await composed({expiryMs:180});let ws,nextWs;try{
-    const {cookie}=originalCookie(f);ws=await socketFor(f,cookie+'; afos_fixture_native=approved');let next=frames(ws);
-    const closed=new Promise(resolve=>ws.once('close',resolve));
+test('AFOS-WS-05 selected short grants renew until Main denial ends only logical stream',async()=>{
+  const f=await composed({expiryMs:180,denyReadAfterMs:320});let ws;try{
+    const {cookie}=originalCookie(f);ws=await socketFor(f,cookie+'; afos_fixture_native=approved');const next=frames(ws);
     open(ws,'ready','$events',{args:{}});assert.equal((await next()).value.type,'ready');
     open(ws,'own','session/follow',{args:{request:{address:{kind:'session',sessionId:f.sessionId},assistantStream:true,maxMessages:500}}});
-    assert.equal((await next()).value.type,'snapshot');await bounded(closed);
-    assert.equal(ws.readyState,WebSocket.CLOSED);
-    nextWs=await socketFor(f,cookie+'; afos_fixture_native=approved');next=frames(nextWs);
-    open(nextWs,'ready-again','$events',{args:{}});assert.equal((await next()).value.type,'ready');
-  }finally{await endSocket(ws);await endSocket(nextWs);await f.cleanup();}
+    assert.equal((await next()).value.type,'snapshot');const opened=Date.now(),denied=await next();assert.ok(Date.now()-opened>=180);assert.equal(denied.streamId,'own');assert.equal(denied.type,'error');assert.equal(ws.readyState,WebSocket.OPEN);
+    open(ws,'healthy-control','session/control',{args:{}});assert.equal((await next()).value.type,'baseline');
+    open(ws,'foreign','session/follow',{args:{request:{address:{kind:'session',sessionId:'unowned'}}}});assert.equal((await next()).type,'error');
+    assert.equal(ws.readyState,WebSocket.OPEN);
+  }finally{await endSocket(ws);await f.cleanup();}
 });
 
 test('AFOS-WS-06 fresh Main revocation closes an established original mux and raw file/upload remain absent from parent',async()=>{

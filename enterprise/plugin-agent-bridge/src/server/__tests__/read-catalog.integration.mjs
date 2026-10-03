@@ -21,7 +21,7 @@ async function composed(options={}){let ctx,models=0,created=0;
   const f=await fixture({base:options.base,keepBase:options.keepBase,response:options.response,stopHost:async()=>{if(ctx){const old=ctx;ctx=undefined;await old.fiber.dispose();}},model:async()=>{models++;return [{type:'finish',reason:{kind:'stop'}}];}});
   await f.ready();f.capability({ingressValidated:true,sandbox:'full'});
   f.startHook(async(signal,layout,authority,business)=>{
-    ctx=await bootEnterpriseNativeWsCore({root:layout.profile,binding:authority.binding,projectId:authority.project.id,model:policy,signal,business,
+    ctx=await bootEnterpriseNativeWsCore({root:layout.profile,binding:authority.binding,projectId:authority.project.id,model:policy,signal,business:options.business?options.business(business):business,
       nativeCaller:{async assertRequest(request,signal){signal.throwIfAborted();const cookie=request.headers instanceof Headers?request.headers.get('cookie'):request.headers.cookie;
         if(typeof cookie!=='string'||!cookie.split(';').map(x=>x.trim()).includes('afos_fixture_native=approved'))throw Error('caller missing');
         return {signal,expiresAt:Date.now()+60_000};}}});
@@ -104,8 +104,9 @@ test('READ-CATALOG-02 original persisted SQLite/JSONL page/projections after sto
   assert.equal((await f.http('session/projections',{args:{request:{sessionId:'unowned-history'}}})).ok,false);
   assert.equal((await f.http('session/page',{args:{request:{address:{kind:'session',sessionId:id},throughSeq:Number.MAX_SAFE_INTEGER}}})).ok,false);
   socket=await f.socket();socket.open('workspace','workspace/follow');assert.equal((await socket.next()).type,'item');socket.open('control','session/control');assert.equal((await socket.next()).type,'item');
-  // Original cold follow promotes an Agent; that live-only endpoint must refuse.
-  socket.open('cold-follow','session/follow',{args:{request:{address:{kind:'session',sessionId:id},assistantStream:true,maxMessages:500}}});const follow=await socket.next();assert.equal(follow.type,'error');
+  // The bounded adapter returns exactly the original cold snapshot without resuming promotion.
+  socket.open('cold-follow','session/follow',{args:{request:{address:{kind:'session',sessionId:id},assistantStream:true,maxMessages:500}}});const follow=await socket.next();assert.equal(follow.type,'item');assert.equal(follow.value.type,'snapshot');assert.equal(follow.value.header.id,id);assert.deepEqual(follow.value.assistantStream,{revision:0});
+  socket.open('unowned-cold-follow','session/follow',{args:{request:{address:{kind:'session',sessionId:'unowned-history'},assistantStream:true}}});assert.equal((await socket.next()).type,'error');
   assert.equal(f.ctx().agents.list().length,0);assert.equal(f.created(),0);assert.equal(f.models(),models);
   const before=f.calls.filter(x=>x==='identity.current').length;await f.http('session/projections',{args:{request:{sessionId:id}}});assert.ok(f.calls.filter(x=>x==='identity.current').length>before);
   f.revoke();const refused=await f.http('session/projections',{args:{request:{sessionId:id}}}).catch(()=>({ok:false}));assert.equal(refused.ok,false);
@@ -142,3 +143,5 @@ test('READ-CATALOG-05 project replacement and changed server account cannot reus
   f.principal('other-account');const changed=await f.http('session/page',{args:{request:{address:{kind:'session',sessionId:start.value.sessionId},throughSeq:0}}}).catch(()=>({ok:false}));
   assert.ok(changed.ok===false||changed.status===403);assert.equal(current.signal.aborted,true);
 }finally{await socket?.close();await f.cleanup();}});
+
+export { composed, bounded, publicSdk };

@@ -89,7 +89,12 @@ export default class NativeWsAdmission extends Service {
           proof.assertCurrent();
           // Cold transport readiness has no Session content/authority. Each native
           // invocation still acquires its exact fresh owned Session lease.
-          if(owner.ctx.get('afosDraftRuntime')?.nativeSessionId()!==undefined)
+          // The installed finite catalog facade authorizes each logical Session
+          // read. A selected Session's short content grant must not own unrelated
+          // streams on this physical, separately Main-authenticated connection.
+          const catalog = owner.ctx.afosNativeReadBridge.catalog && owner.ctx.get('afosOwnedNativeMuxRead');
+          if(catalog)await owner.ctx.afosNativeReadBridge.catalog!.assertAuthority(proof.signal);
+          else if(owner.ctx.get('afosDraftRuntime')?.nativeSessionId()!==undefined)
             permit = await owner.ctx.afosNativeReadBridge.admitReadCarrier(proof.signal);
           proof.assertCurrent(); permit?.assertCurrent();
           if (socket.destroyed || owner.#lifetime.signal.aborted) throw new EnterpriseProfileError('afos/native-read-denied');
@@ -101,6 +106,7 @@ export default class NativeWsAdmission extends Service {
           // The unchanged original handler alone owns WebSocket negotiation/mux/pumping.
           await route.handler(request, socket, head);
           await proof.assertFresh(); proof.assertCurrent(); permit?.assertCurrent();
+          if(catalog)await owner.ctx.afosNativeReadBridge.catalog!.assertAuthority(proof.signal);
         } catch {
           cleanup(); socket.destroy();
         }

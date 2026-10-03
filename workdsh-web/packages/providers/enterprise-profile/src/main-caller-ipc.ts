@@ -34,7 +34,12 @@ export function parentCallerIpc(issuer:NativeCallerIssuer|undefined,business:Mai
         const check=()=>{active();raw.signal.throwIfAborted();raw.assertCurrent?.();if(Date.now()>=expiresAt)denied();};
         check();const freshSignal=AbortSignal.any([caller,raw.signal,signal]);
         const current=await within(business.currentAuthority(freshSignal),freshSignal);check();caller.throwIfAborted();
-        const bounded=Math.min(expiresAt,Date.parse(current.expiresAt));if(!Number.isFinite(bounded)||bounded<=Date.now())denied();
+        // Physical Main-frame lifetime and short business authority have different
+        // owners. Every action/frame still calls caller.assert for fresh authority;
+        // the one-use issuer alone supplies this fixed, at-most-60-second cutoff.
+        const currentExpiresAt=Date.parse(current.expiresAt);
+        if(!Number.isFinite(currentExpiresAt)||currentExpiresAt<=Date.now()||currentExpiresAt>Date.now()+5000)denied();
+        const bounded=expiresAt;
         const abort=new AbortController(),combined=AbortSignal.any([signal,raw.signal,abort.signal]),leaseId=randomUUID();
         const assertCurrent=()=>{check();combined.throwIfAborted();if(Date.now()>=bounded)denied();};
         let ended=false;

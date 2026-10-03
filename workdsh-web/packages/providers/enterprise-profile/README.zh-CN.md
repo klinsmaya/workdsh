@@ -77,4 +77,4 @@ Main 另有私有 `ownedSessionRead`：每次取得当前项目的服务端新�
 Core 检查覆盖已完成执行后的历史授权、服务端撤权及失败启动。这不代表原生
 Conversation 已挂载，也不授权桌面激活。
 
-可选原 CLI 在线载体已提供 private ready 交接与自有 Electron Session/window 接点。生产 capability 仍拒绝。新鲜归属只读目录与冷 page/projections 组件见 [READONLY_CATALOG.zh-CN.md](./READONLY_CATALOG.zh-CN.md)；settings、冷 retained follow 与完整 Composer 仍有缺口，Root/Main 组合仍须验证。见 [ONLINE_CARRIER.zh-CN.md](./ONLINE_CARRIER.zh-CN.md)。
+可选原 CLI 在线载体提供 private ready 交接与自有 Electron Session/window 接点，生产 capability 仍拒绝。[READONLY_CATALOG.zh-CN.md](./READONLY_CATALOG.zh-CN.md) 描述新鲜归属目录与冷 page/projections；[COLD_RETAIN.zh-CN.md](./COLD_RETAIN.zh-CN.md) 描述原 SDK/Conversation 的有限冷首帧适配。同一原 live 迭代器为 exact 已存在 selected Agent/Session 续验 Main 短权限。Settings 和通用 Composer 写入仍有缺口。Root 组合须另行验证。见 [ONLINE_CARRIER.zh-CN.md](./ONLINE_CARRIER.zh-CN.md)。

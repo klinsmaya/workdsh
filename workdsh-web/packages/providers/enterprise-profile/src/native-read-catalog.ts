@@ -1,13 +1,16 @@
 import { getTraceable, symbols, type Context } from '@deepseek-ai/cordis';
 import { SessionId } from '@deepseek-ai/dsh-session';
 import type { SessionController } from '@deepseek-ai/dsh-api-session-controller';
-import type { SessionListValue, SessionPageRequest, SessionProjectionsRequest } from '@deepseek-ai/dsh-api-session-controller/types';
+import type { SessionFollowFrame, SessionFollowRequest, SessionListValue, SessionPageRequest, SessionProjectionsRequest } from '@deepseek-ai/dsh-api-session-controller/types';
 import type { MainBusinessCapabilities } from './main-capabilities.js';
 import { EnterpriseProfileError, SnapshotIdentityAuthority } from './snapshot-authority.js';
 import type {} from './cli-bootstrap.js';
 import type {} from '@deepseek-ai/dsh-session-query-sqlite';
 
 type Grant = Awaited<ReturnType<MainBusinessCapabilities['ownedSessionRead']>>;
+type OrdinaryFollowRequest = Omit<SessionFollowRequest, 'address'> & {
+  readonly address: Extract<SessionFollowRequest['address'], { readonly kind: 'session' }>;
+};
 type WorkspaceController = { follow(signal: AbortSignal): AsyncIterable<unknown> };
 type SettingsController = { describe(): unknown };
 const denied = () => new EnterpriseProfileError('afos/native-read-denied');
@@ -42,6 +45,19 @@ function pageRequest(request: unknown): asserts request is SessionPageRequest {
     integer(request.turnWindow.minTurns, 0, 100);
   }
 }
+function followRequest(request: unknown): asserts request is OrdinaryFollowRequest {
+  record(request, ['address', 'assistantStream', 'maxMessages', 'turnWindow']);
+  record(request.address, ['kind', 'sessionId']);
+  if (request.address.kind !== 'session') throw denied();
+  sessionId(request.address.sessionId);
+  if (request.assistantStream !== undefined && request.assistantStream !== true) throw denied();
+  if (request.maxMessages !== undefined) integer(request.maxMessages, 1, 500);
+  if (request.turnWindow !== undefined) {
+    record(request.turnWindow, ['minMessages', 'minTurns']);
+    integer(request.turnWindow.minMessages, 0, (request.maxMessages as number | undefined) ?? 500);
+    integer(request.turnWindow.minTurns, 0, 100);
+  }
+}
 
 /** Business admission/filtering over the exact original private Controller and query provider. */
 export class EnterpriseNativeReadCatalog {
@@ -59,12 +75,20 @@ export class EnterpriseNativeReadCatalog {
     const signal = AbortSignal.any([caller, this.lifetime, ...(this.owner.afosMainBusiness.hostSignal ? [this.owner.afosMainBusiness.hostSignal] : [])]);
     signal.throwIfAborted(); return signal;
   }
+  private assertComposition(): void {
+    const controller = this.controllerContext.get('sessionController');
+    if (!controller || original(controller) !== original(this.controller)
+      || this.controllerContext.get('webServer') !== undefined) throw denied();
+  }
   private async fresh(signal: AbortSignal): Promise<void> {
     signal.throwIfAborted();
+    this.assertComposition();
     const identity = this.identity;
     await identity.current(identity.binding, signal);
-    signal.throwIfAborted();
+    signal.throwIfAborted(); this.assertComposition();
   }
+  /** Physical readiness asks current identity only, and grants no Session content. */
+  async assertAuthority(caller: AbortSignal): Promise<void> { await this.fresh(this.signal(caller)); }
   private assertGrant(id: string, grant: Grant, signal: AbortSignal): void {
     signal.throwIfAborted();
     const expires = Date.parse(grant.expiresAt);
@@ -98,6 +122,134 @@ export class EnterpriseNativeReadCatalog {
     const previous = owners.get(id); if (!previous) return false;
     try { await this.grant(id, signal, previous); return true; }
     catch { signal.throwIfAborted(); await this.fresh(signal); return false; }
+  }
+  /** Local availability only; storage still waits for an exact fresh Main read grant. */
+  isColdSession(request: unknown): boolean {
+    record(request, ['address', 'assistantStream', 'maxMessages', 'turnWindow']);
+    record(request.address, ['kind', 'sessionId']);
+    if (request.address.kind !== 'session') throw denied(); sessionId(request.address.sessionId);
+    this.assertComposition();
+    const id = SessionId(sessionId(request.address.sessionId)), agents = this.owner.get('agents'), sessions = this.owner.get('sessions');
+    if (!agents || !sessions) throw denied();
+    return !agents.get(id) && !sessions.get(id);
+  }
+  /** Continue one original live iterator under fresh short Main read grants. */
+  async *liveFollow(request: unknown, caller: AbortSignal, carrierExpiresAt: number): AsyncIterable<SessionFollowFrame> {
+    followRequest(request);
+    const id = SessionId(sessionId(request.address.sessionId)), signal = this.signal(caller);
+    const agents = this.owner.get('agents'), sessions = this.owner.get('sessions');
+    const agent = agents?.get(id), session = sessions?.get(id), query = this.controllerContext.get('sessionQuery');
+    if (!agent || !session || original(agent.session) !== original(session) || !query
+      || !Number.isSafeInteger(carrierExpiresAt) || carrierExpiresAt <= Date.now()
+      || carrierExpiresAt > Date.now() + 60_000) throw denied();
+    const assertLive = () => {
+      this.assertComposition();
+      const currentQuery = this.controllerContext.get('sessionQuery');
+      const currentAgent = this.owner.get('agents')?.get(id), currentSession = this.owner.get('sessions')?.get(id);
+      const privateAgent = this.controllerContext.get('agents')?.get(id), privateSession = this.controllerContext.get('sessions')?.get(id);
+      if (this.owner.get('afosDraftRuntime')?.nativeSessionId() !== id || !currentQuery
+        || original(currentQuery) !== original(query) || !currentAgent || !currentSession || !privateAgent || !privateSession
+        || original(currentAgent) !== original(agent) || original(currentSession) !== original(session)
+        || original(privateAgent) !== original(agent) || original(privateSession) !== original(session)
+        || original(currentAgent.session) !== original(session)) throw denied();
+    };
+    assertLive();
+    let grant = await this.grant(id, signal); assertLive();
+    const ended = new AbortController(), combined = AbortSignal.any([signal, grant.signal, ended.signal]);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const arm = () => { clearTimeout(timer); timer = setTimeout(() => ended.abort(denied()),
+      Math.max(1, Math.min(Date.parse(grant.expiresAt), carrierExpiresAt) - Date.now())); timer.unref(); };
+    const renew = async () => {
+      while (!combined.aborted) {
+        const remaining = Math.min(Date.parse(grant.expiresAt), carrierExpiresAt) - Date.now();
+        await new Promise<void>(resolve => {
+          let wake: ReturnType<typeof setTimeout>;
+          const done = () => { clearTimeout(wake); combined.removeEventListener('abort', done); resolve(); };
+          if (combined.aborted) resolve();
+          else { wake = setTimeout(done, Math.max(1, Math.min(3_000, Math.floor(remaining / 2)))); wake.unref(); combined.addEventListener('abort', done, { once: true }); }
+        });
+        if (combined.aborted) return;
+        const previous = grant, fresh = await this.grant(id, combined, previous);
+        assertLive(); if (fresh.signal !== previous.signal) throw denied();
+        combined.throwIfAborted(); grant = fresh; arm();
+      }
+    };
+    arm();
+    const renewal = renew().catch(error => { if (!combined.aborted) ended.abort(error); });
+    let iterator: AsyncIterator<SessionFollowFrame> | undefined;
+    try {
+      iterator = this.controller.follow(request, combined)[Symbol.asyncIterator]();
+      while (!combined.aborted) {
+        const frame = await iterator.next();
+        combined.throwIfAborted(); assertLive();
+        if (frame.done) return;
+        const previous = grant, fresh = await this.grant(id, combined, previous);
+        assertLive(); if (fresh.signal !== previous.signal) throw denied();
+        combined.throwIfAborted(); grant = fresh; arm();
+        yield frame.value;
+      }
+      combined.throwIfAborted();
+    } finally {
+      ended.abort(); clearTimeout(timer);
+      try { await iterator?.return?.(); } finally { await renewal; }
+    }
+  }
+  /** One public opening snapshot; never resume the original iterator into cold Agent promotion. */
+  async *coldFollow(request: unknown, caller: AbortSignal, carrierExpiresAt: number): AsyncIterable<SessionFollowFrame> {
+    followRequest(request);
+    const id = sessionId(request.address.sessionId), signal = this.signal(caller);
+    if (!this.isColdSession(request) || !Number.isSafeInteger(carrierExpiresAt)
+      || carrierExpiresAt <= Date.now() || carrierExpiresAt > Date.now() + 60_000) throw denied();
+    const query = this.controllerContext.get('sessionQuery'); if (!query) throw denied();
+    let grant = await this.grant(id, signal); const expiry = new AbortController();
+    const combined = AbortSignal.any([signal, grant.signal, expiry.signal]);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const arm = () => { clearTimeout(timer); timer = setTimeout(() => expiry.abort(),
+      Math.max(1, Math.min(Date.parse(grant.expiresAt), carrierExpiresAt) - Date.now())); timer.unref(); };
+    arm();
+    try {
+      const openingQuery = this.controllerContext.get('sessionQuery');
+      if (!openingQuery || original(openingQuery) !== original(query) || !this.isColdSession(request)) throw denied();
+      const iterator = this.controller.follow(request, combined)[Symbol.asyncIterator]();
+      let first: IteratorResult<SessionFollowFrame>;
+      try { first = await iterator.next(); }
+      finally { await iterator.return?.(); }
+      const fresh = await this.grant(id, combined, grant);
+      const currentQuery = this.controllerContext.get('sessionQuery');
+      if (!currentQuery || original(currentQuery) !== original(query)
+        || fresh.signal !== grant.signal || !this.isColdSession(request) || first.done
+        || first.value.type !== 'snapshot' || first.value.header.id !== id || first.value.header.origin === 'subagent'
+        || !Number.isSafeInteger(first.value.cursor) || first.value.cursor < -1
+        || first.value.projections.asOfSeq > first.value.cursor
+        || (request.assistantStream === true && (first.value.assistantStream?.revision !== 0 || first.value.assistantStream.activeAttempt !== undefined))) throw denied();
+      combined.throwIfAborted(); grant = fresh; arm();
+      yield first.value;
+      // Revalidate only business authority. The original history iterator is already closed.
+      // The physical caller's fixed deadline still ends the existing Gateway generation.
+      while (!combined.aborted) {
+        const remaining = Math.min(Date.parse(grant.expiresAt), carrierExpiresAt) - Date.now();
+        const delay = Math.max(1, Math.min(3_000, Math.floor(remaining / 2)));
+        await new Promise<void>(resolve => {
+          let wake: ReturnType<typeof setTimeout>;
+          const done = () => { clearTimeout(wake); combined.removeEventListener('abort', done); resolve(); };
+          if (combined.aborted) resolve();
+          else { wake = setTimeout(done, delay); wake.unref(); combined.addEventListener('abort', done, { once: true }); }
+        });
+        if (combined.aborted) return;
+        let renewed: Grant;
+        try { renewed = await this.grant(id, combined, grant); }
+        catch (error) {
+          // A cancelled private read can reject with an IPC outcome marker. Once
+          // this logical owner ended, leave carrier retry to the original Gateway.
+          if (combined.aborted) return;
+          throw error;
+        }
+        const current = this.controllerContext.get('sessionQuery');
+        if (renewed.signal !== grant.signal || !current || original(current) !== original(query)
+          || !this.isColdSession(request)) throw denied();
+        combined.throwIfAborted(); grant = renewed; arm();
+      }
+    } finally { clearTimeout(timer); expiry.abort(); }
   }
   async list(request: unknown, caller: AbortSignal): Promise<SessionListValue> {
     record(request, []); const signal = this.signal(caller), owners = await this.owners(signal);

@@ -9,6 +9,9 @@ import type {} from './native-ws-http-admission.js';
 import { originalReadControllerExport } from './native-loader-rows.js';
 
 const NAME = 'afosOwnedNativeMuxRead';
+declare module '@deepseek-ai/cordis' {
+  interface Context { afosOwnedNativeMuxRead: NativeWsFacade; }
+}
 const READS = new Set(['list', 'page', 'projections', 'follow', 'control']);
 const unavailable = () => new RemoteError('afos/session-view-unavailable', 'Owned live Session view unavailable', {});
 function contribution(ctx:Context,original:TypertContribution,namespace:string,service:string,reads:readonly string[],owner:object):void {
@@ -90,8 +93,18 @@ export default class NativeWsFacade extends Service {
       for await (const value of source) { await proof.assertFresh(); proof.assertCurrent(); permit.assertCurrent(); yield value; }
     } finally { permit.close(); }
   }
-  follow(request: SessionFollowRequest, signal?: AbortSignal): AsyncIterable<unknown> {
-    return this.ownedStream('session/follow', { args: { request } }, signal);
+  async *follow(request: SessionFollowRequest, caller?: AbortSignal): AsyncIterable<unknown> {
+    const invocation = this.ctx.invocation, catalog = this.ctx.afosNativeReadBridge.catalog;
+    if (!invocation || !catalog) throw unavailable();
+    const peer = invocation.peer, proof = this.ctx.afosNativeHttpProof.carrierProof(peer);
+    const signal = AbortSignal.any([invocation.signal, ...(caller ? [caller] : []), proof.signal]);
+    await proof.assertFresh(); proof.assertCurrent(); signal.throwIfAborted();
+    const cold = catalog.isColdSession(request);
+    const source = cold ? catalog.coldFollow(request, signal, proof.expiresAt)
+      : catalog.liveFollow(request, signal, proof.expiresAt);
+    for await (const frame of source) {
+      await proof.assertFresh(); proof.assertCurrent(); signal.throwIfAborted(); yield frame;
+    }
   }
   control(signal?: AbortSignal): AsyncIterable<unknown> {
     return catalogStream(this.ctx,'control',signal);

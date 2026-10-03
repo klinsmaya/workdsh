@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { MainCallerProofIssuer,NATIVE_WITNESS_HEADER } from '../../../../../dsh-plugin-desktop/src/enterprise-caller-proof.ts';
 import { callerRequestFromHttp,finiteCallerRequest } from '../dist/native-caller-ipc.js';
+import { parentCallerIpc } from '../dist/main-caller-ipc.js';
 function fixture(t){
  const frame={detached:false,url:'http://127.0.0.1:27890/',top:null};frame.top=frame;
  const session={},contents={id:17,session,mainFrame:frame,isDestroyed:()=>false,getURL:()=>frame.url};
@@ -22,3 +23,27 @@ test('navigation/frame replacement invalidates a previously captured permit',asy
 test('clock advance rejects witnesses and permits before timers run',async t=>{const f=fixture(t),original=Date.now,w=f.stamp();try{Date.now=()=>original()+5001;await assert.rejects(f.issuer.assertRequest(f.request(w),f.host.signal));}finally{Date.now=original;}const grant=await f.issuer.assertRequest(f.request(f.stamp(2)),f.host.signal);try{Date.now=()=>grant.expiresAt;assert.throws(()=>grant.assertCurrent());}finally{Date.now=original;grant.close();}});
 test('witness queue is bounded and completion frees only the owned request',t=>{const f=fixture(t);for(let n=1;n<=32;n++)f.stamp(n);assert.throws(()=>f.stamp(33));f.issuer.finishRequest(9);f.stamp(33);assert.throws(()=>f.stamp(34));});
 test('IPC proof facts reject duplicate/accessor/body/url/principal fields without evaluation',t=>{const f=fixture(t),value=f.request(f.stamp());for(const extra of ['body','url','actor','token','frame'])assert.throws(()=>finiteCallerRequest({...value,[extra]:'forged'}));let invoked=false;const accessor={...value};Object.defineProperty(accessor,'witness',{get(){invoked=true;return value.witness;},enumerable:true});assert.throws(()=>finiteCallerRequest(accessor));assert.equal(invoked,false);assert.throws(()=>callerRequestFromHttp({method:'POST',url:value.path,headers:{host:value.authority,[NATIVE_WITNESS_HEADER]:value.witness,'X-AFOS-NATIVE-WITNESS':value.witness}}));});
+test('private caller keeps real issuer deadline across short business expiry and rechecks fresh authority',async t=>{
+ const f=fixture(t),clock=Date.now,cutoffs=[];let reads=0,deny=false;
+ const business={currentAuthority:async signal=>{signal.throwIfAborted();reads++;if(deny)throw Error('current authority denied');return {expiresAt:new Date(Date.now()+5000).toISOString()};}};
+ const parent=parentCallerIpc(f.issuer,business,f.host.signal,async id=>{cutoffs.push(id);});t.after(()=>parent.close());
+ const admitted=await parent.perform('caller.admit',{request:f.request(f.stamp())},f.host.signal);
+ assert.ok(admitted.expiresAt>clock()+59000);assert.ok(admitted.expiresAt<=clock()+60000);assert.equal(reads,1);
+ try{Date.now=()=>clock()+6000;await parent.perform('caller.assert',{leaseId:admitted.leaseId},f.host.signal);assert.equal(reads,2);assert.equal(cutoffs.length,0);
+  deny=true;await assert.rejects(parent.perform('caller.assert',{leaseId:admitted.leaseId},f.host.signal),/current authority denied/);assert.equal(reads,3);
+  deny=false;Date.now=()=>admitted.expiresAt;await assert.rejects(parent.perform('caller.assert',{leaseId:admitted.leaseId},f.host.signal));assert.equal(reads,3);
+ }finally{Date.now=clock;parent.close();}
+ assert.deepEqual(cutoffs,[admitted.leaseId]);
+});
+test('private caller fresh await cannot revive captured frame after synchronous account cutoff',async t=>{
+ const f=fixture(t),entered=Promise.withResolvers(),release=Promise.withResolvers();let hold=false,cutoffs=[];
+ const parent=parentCallerIpc(f.issuer,{currentAuthority:async()=>{if(hold){entered.resolve();await release.promise;}return {expiresAt:new Date(Date.now()+5000).toISOString()};}},f.host.signal,async id=>{cutoffs.push(id);});t.after(()=>parent.close());
+ const admitted=await parent.perform('caller.admit',{request:f.request(f.stamp())},f.host.signal);hold=true;
+ const pending=parent.perform('caller.assert',{leaseId:admitted.leaseId},f.host.signal),rejected=assert.rejects(pending);
+ await entered.promise;f.account.abort();assert.deepEqual(cutoffs,[admitted.leaseId]);await rejected;release.resolve();
+ await assert.rejects(parent.perform('caller.assert',{leaseId:admitted.leaseId},f.host.signal));assert.equal(cutoffs.length,1);
+});
+test('private caller admission refuses expired or oversized business authority despite a genuine witness',async t=>{
+ for(const ttl of [-1,60000]){const f=fixture(t),parent=parentCallerIpc(f.issuer,{currentAuthority:async()=>({expiresAt:new Date(Date.now()+ttl).toISOString()})},f.host.signal,async()=>{});t.after(()=>parent.close());
+  await assert.rejects(parent.perform('caller.admit',{request:f.request(f.stamp())},f.host.signal));}
+});
