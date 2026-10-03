@@ -24,6 +24,7 @@ import type { EnterpriseProject } from './enterprise-broker.ts'
 import { createEnterpriseElectronHost, runtimeDraftProjection, enterpriseRuntimePaths } from './enterprise-electron.ts'
 import type { installLocalDraftIpc } from './enterprise-local-ipc.ts'
 import { createEnterpriseWindowOwner } from './enterprise-window.ts'
+import { credentialStorageUi } from './enterprise-credential-state.ts'
 
 const PROFILE_NAME = 'workdsh'
 const READY_PATTERN = /dsh web:\s+(http:\/\/127\.0\.0\.1:\d+\/?\?token=[^\s]+)/u
@@ -270,14 +271,20 @@ function installEnterpriseEntry(): boolean {
   const localSession = session
   let projects: readonly EnterpriseProject[] = []
   const report = async (work: () => Promise<unknown>, success: string): Promise<void> => {
-    try { const operation = work(); localDraftOwner?.changed(); await operation; await dialog.showMessageBox({ type: 'info', title: 'AFOS', message: success }) }
+    try {
+      const operation = work(); localDraftOwner?.changed(); await operation
+      refreshMenu()
+      const storage = credentialStorageUi(session.credentialStorageState())
+      await dialog.showMessageBox({ type: 'info', title: 'AFOS', message: success, ...(storage.detail ? { detail: storage.detail } : {}) })
+    }
     catch (error) {
       const code = error instanceof Error && /^(?:enterprise|auth|broker|afos)\/[a-z-]{1,80}$/u.test(error.message) ? error.message : 'enterprise/action-failed'
       await dialog.showMessageBox({ type: 'error', title: 'AFOS', message: code })
-    } finally { localDraftOwner?.changed() }
+    } finally { refreshMenu(); localDraftOwner?.changed() }
   }
   const refreshMenu = (): void => {
     const account: MenuItemConstructorOptions[] = [
+      { label: credentialStorageUi(session.credentialStorageState()).label, enabled: false },
       { label: 'Sign in / 登录', click: () => { enterpriseWindows?.cancelStart(); void report(async () => { projects = []; refreshMenu(); projects = await session.signIn(); refreshMenu() }, 'Select an allowed project from the account menu. / 请在账号菜单选择已授权项目。') } },
       { label: 'Projects / 项目', submenu: projects.map(project => ({ label: project.name.replaceAll('&', '').slice(0, 80), click: () => { enterpriseWindows?.cancelStart(); void report(() => session.selectProject(project.id), 'Account and project verified. / 账号与项目已核实。') } })) },
       { label: 'Start enterprise Host / 启动企业 Host', click: () => { void report(async () => { if (!enterpriseWindows) throw new Error('enterprise/window-owner-refused'); await enterpriseWindows.startHost() }, 'Enterprise Host started. / 企业 Host 已启动。') } },
@@ -287,7 +294,8 @@ function installEnterpriseEntry(): boolean {
     ]
     Menu.setApplicationMenu(Menu.buildFromTemplate([{ label: 'AFOS', submenu: account }]))
   }
-  refreshMenu()
+  const unobserveCredentials = session.observeCredentialStorage(refreshMenu)
+  app.once('will-quit', unobserveCredentials)
   enterpriseWindows = createEnterpriseWindowOwner({ createWindow: options => new BrowserWindow(options), ipc: ipcMain, appPath: app.getAppPath(),
     capabilities: () => localSession.localDraftCapabilities(), projectDraft: runtimeDraftProjection(enterprisePaths.runtimeProfile),
     activated: face => { window = face.window; localDraftOwner = face.owner },

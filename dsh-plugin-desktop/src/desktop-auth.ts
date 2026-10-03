@@ -124,6 +124,7 @@ export class DesktopAuth {
     private readonly config: EnterpriseAuthConfig,
     private readonly openBrowser: (url: string) => Promise<void>,
     private readonly fetcher: typeof fetch = fetch,
+    private readonly onStateChanged: () => void = () => {},
   ) {
     endpoint(config.issuer)
     endpoint(config.resource)
@@ -217,6 +218,7 @@ export class DesktopAuth {
       || body.refresh_token !== undefined && !secret(body.refresh_token)) throw new DesktopAuthError('auth/invalid-token-response')
     this.tokens = body as unknown as Tokens
     this.expiresAt = Date.now() + body.expires_in * 1_000
+    this.notifyStateChanged()
     return body.access_token
   }
   /** Trusted Broker caller only; must never be registered as renderer/Agent API. */
@@ -292,6 +294,11 @@ export class DesktopAuth {
     this.expiresAt = 0
     this.refreshFlight = undefined
     this.persistedRefresh = undefined
+    this.notifyStateChanged()
+  }
+  private notifyStateChanged(): void {
+    // Native presentation cannot change the authentication outcome.
+    try { this.onStateChanged() } catch {}
   }
 }
 

@@ -1,6 +1,7 @@
 import { accountNamespace, DesktopAuth, RefreshTokenVault, type EnterpriseAuthConfig } from './desktop-auth.ts'
 import { EnterpriseBroker, EnterpriseBrokerError, type CurrentAuthoritySnapshot, type EnterpriseProject, type RunAuthorization, type SourceRef } from './enterprise-broker.ts'
 import { EnterpriseRecoveryStore, isOwnedSessionId, type DraftRecord, type OfficialSessionSummaryEvent, type RecoveryLayout, type RecoveryStoreOptions, type RecoveryTransport } from './enterprise-recovery.ts'
+import type { EnterpriseCredentialStorageState } from './enterprise-credential-state.ts'
 
 /** Private trusted Host callback. Only official Agent setup receives a publication lease. */
 export interface EnterpriseSessionBindingLease { commit(): void; dispose(): void }
@@ -81,6 +82,9 @@ export class EnterpriseMainSession {
   private namespace: string | undefined
   private readonly currentLoginVaults = new Set<string>()
   private readonly pendingVaultDeletions = new Set<string>()
+  private refreshPersisted = false
+  private readonly credentialStorageObservers = new Set<() => void>()
+  private notifiedCredentialStorage: EnterpriseCredentialStorageState = 'signed-out'
   private authorizing = false
   private ready = false
   private readonly runs = new Map<string, RunAuthorization>()
@@ -108,7 +112,10 @@ export class EnterpriseMainSession {
     const issuer = new URL(config.auth.issuer)
     issuer.pathname = `${issuer.pathname.replace(/\/$/u, '')}/afos`
     if (config.auth.resource !== issuer.href || !/^afos(?: offline_access)?$/u.test(config.auth.scope)) fail('restricted-resource-required')
-    this.auth = new DesktopAuth(Object.freeze({ ...config.auth }), openBrowser, fetcher)
+    this.auth = new DesktopAuth(Object.freeze({ ...config.auth }), openBrowser, fetcher, () => {
+      this.refreshPersisted = false
+      this.notifyCredentialStorage()
+    })
     this.broker = new EnterpriseBroker(config.auth.issuer, this.auth, fetcher)
   }
   private cutoff(): void {
@@ -128,6 +135,7 @@ export class EnterpriseMainSession {
     this.offline = false
     this.selectedProject = undefined
     this.namespace = undefined
+    this.refreshPersisted = false
     this.runs.clear()
     this.activeRunId = undefined
     this.authorizing = false
@@ -137,6 +145,25 @@ export class EnterpriseMainSession {
     this.sessionDrafts.clear()
     this.historicalSessionDrafts.clear()
     this.sessionLeases.clear()
+    this.notifyCredentialStorage()
+  }
+  /** Finite native account-menu state; never export it as credential or Agent IPC. */
+  credentialStorageState(): EnterpriseCredentialStorageState {
+    return !this.auth.signedIn ? 'signed-out' : this.refreshPersisted ? 'encrypted' : 'memory-only'
+  }
+  /** Main-native observation only; subscriber failures cannot change authority or credential writes. */
+  observeCredentialStorage(callback: () => void): () => void {
+    this.credentialStorageObservers.add(callback)
+    try { callback() } catch {}
+    return () => { this.credentialStorageObservers.delete(callback) }
+  }
+  private notifyCredentialStorage(): void {
+    const state = this.credentialStorageState()
+    if (state === this.notifiedCredentialStorage) return
+    this.notifiedCredentialStorage = state
+    for (const callback of [...this.credentialStorageObservers]) {
+      try { callback() } catch {}
+    }
   }
   private current(generation: number): void { if (generation !== this.generation) fail('account-changed') }
   private mutate<T>(generation: number, work: () => Promise<T>): Promise<T> {
@@ -212,7 +239,10 @@ export class EnterpriseMainSession {
       this.currentLoginVaults.add(this.namespace)
       this.recovery = EnterpriseRecoveryStore.open(this.base, authority.binding, this.recoveryTransport(), this.recoveryOptions)
       this.restoreHistoricalSessionDrafts(project.id)
-      await this.auth.persistRefresh(this.vault, this.namespace)
+      const persisted = await this.auth.persistRefresh(this.vault, this.namespace)
+      this.current(generation)
+      this.refreshPersisted = persisted
+      this.notifyCredentialStorage()
       this.current(generation)
       this.authoritySyncedAt = new Date().toISOString()
       this.ready = true
@@ -245,7 +275,10 @@ export class EnterpriseMainSession {
         this.currentLoginVaults.add(namespace)
         this.recovery = EnterpriseRecoveryStore.open(this.base, binding, this.recoveryTransport(), this.recoveryOptions)
         this.restoreHistoricalSessionDrafts(project.id)
-        await this.auth.persistRefresh(this.vault, namespace)
+        const persisted = await this.auth.persistRefresh(this.vault, namespace)
+        this.current(generation)
+        this.refreshPersisted = persisted
+        this.notifyCredentialStorage()
         this.current(generation)
         this.authoritySyncedAt = new Date().toISOString()
         this.ready = true
@@ -268,7 +301,12 @@ export class EnterpriseMainSession {
       const authority = await this.broker.currentAuthority(this.authority.binding, combined)
       this.current(generation); combined.throwIfAborted()
       if (!restart) this.enterprise()
-      if (this.namespace) await this.auth.persistRefresh(this.vault, this.namespace)
+      if (this.namespace) {
+        const persisted = await this.auth.persistRefresh(this.vault, this.namespace)
+        this.current(generation)
+        this.refreshPersisted = persisted
+        this.notifyCredentialStorage()
+      }
       this.current(generation); combined.throwIfAborted()
       if (!restart) this.enterprise()
       if (Date.parse(authority.expiresAt) <= Date.now()) fail('authority-expired')

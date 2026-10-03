@@ -6,6 +6,7 @@ import { fixture } from '../../enterprise/plugin-agent-bridge/src/server/__tests
 import { installLocalDraftIpc, LOCAL_DRAFT_CHANNELS, LOCAL_DRAFT_DOCUMENT } from '../src/enterprise-local-ipc.ts';
 import { runtimeDraftProjection } from '../src/enterprise-electron.ts';
 import './enterprise-cold-history.test.mjs';
+import './enterprise-credential-state.test.mjs';
 
 const runtimeProfile = fileURLToPath(new URL('../../workdsh-web/packages/providers/enterprise-profile/', import.meta.url));
 async function seeded(t, { stop = true, projection } = {}) {
