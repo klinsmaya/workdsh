@@ -1,5 +1,12 @@
 # Official reuse record
 
+- D07 private Main IPC: public app-boot `boot.prepare`, original synchronous
+  Agent setup commit and ordinary Node child IPC. A fixed business proxy supplies
+  Main-owned immutable snapshots and awaited write/publication ACK. Model bytes
+  remain the existing adapter input; no Remote/MCP/Loader/loop is copied. See
+  MAIN_IPC.md and local ADR AFOS-0006. Real fork fixtures are component evidence,
+  not a default enterprise carrier activation or target desktop acceptance.
+
 - Tasks: D01/D04/D05/D07/D08/D09/D10; business delta is fixed enterprise ownership,
   pins, draft UI and admission. Formal desktop acceptance remains unpassed.
 - Pinned public packages: DSH 0.1.7-rc.2; Cordis consumer exact4.0.4;

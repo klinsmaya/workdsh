@@ -53,6 +53,14 @@
     "./native-ws-http-admission": {
       "types": "./dist/native-ws-http-admission.d.ts",
       "default": "./dist/native-ws-http-admission.js"
+    },
+    "./main-ipc": {
+      "types": "./dist/main-ipc.d.ts",
+      "default": "./dist/main-ipc.js"
+    },
+    "./ipc-assembly": {
+      "types": "./dist/ipc-assembly.d.ts",
+      "default": "./dist/ipc-assembly.js"
     }
   },
   "files": [
@@ -67,7 +75,10 @@
     "NATIVE_READ_FORWARDING.i18n.yaml",
     "NATIVE_WS_CLIENT.md",
     "NATIVE_WS_CLIENT.zh-CN.md",
-    "NATIVE_WS_CLIENT.i18n.yaml"
+    "NATIVE_WS_CLIENT.i18n.yaml",
+    "MAIN_IPC.md",
+    "MAIN_IPC.zh-CN.md",
+    "MAIN_IPC.i18n.yaml"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",

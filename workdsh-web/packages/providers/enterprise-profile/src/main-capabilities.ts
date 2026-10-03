@@ -18,13 +18,33 @@ export interface OfficialTurnEvent {
   readonly type: 'turn/start' | 'turn/end'; readonly seq: number; readonly time: number;
   readonly data: { readonly turn: number; readonly reason?: { readonly kind: string } };
 }
+/** Original Agent setup consumes commit synchronously; IPC ACK is an explicit later step. */
+export interface MainSessionBindingLease {
+  commit(): void;
+  dispose(): void;
+  readonly signal?: AbortSignal;
+  assertReady?(): void;
+  acknowledge?(signal: AbortSignal): Promise<void>;
+  release?(signal: AbortSignal): Promise<void>;
+}
+/** Optional child-only async writes. Synchronous methods retain their same-realm contract. */
+export interface MainAsyncBusinessAccess {
+  refreshLocalState(signal: AbortSignal): Promise<void>;
+  editDraft(draftId: string, content: string, signal: AbortSignal): Promise<MainDraftRecord>;
+  projectSessionEvent(sessionId: string, event: OfficialTurnEvent, signal: AbortSignal): Promise<void>;
+  markCancellation(sessionId: string, stopped: boolean, signal: AbortSignal): Promise<void>;
+  releaseRunAdmission(runId: string, signal: AbortSignal): Promise<void>;
+}
 /** Injected privately at trusted assembly. Never serialized or exposed as one Remote. */
 export interface MainBusinessCapabilities {
+  /** Captured Host execution lifetime. This in-process value is never serialized. */
+  readonly hostSignal?: AbortSignal;
+  readonly asyncAccess?: MainAsyncBusinessAccess;
   currentAuthority(signal: AbortSignal): Promise<GatewayAuthoritySnapshot>;
   localState(): { readonly project: { readonly id: string; readonly name: string }; readonly authority: 'current' | 'offline'; readonly lastSyncAt: string };
   authorize(refs: readonly EnterpriseSourceRef[], operationId: string, signal: AbortSignal): Promise<OwnedEnterpriseRun>;
   releaseRunAdmission(runId: string): void;
-  prepareSessionBinding(runId: string, sessionId: string, signal: AbortSignal): Promise<{ commit(): void; dispose(): void }>;
+  prepareSessionBinding(runId: string, sessionId: string, signal: AbortSignal): Promise<MainSessionBindingLease>;
   sessionRun(sessionId: string, signal: AbortSignal): Promise<OwnedEnterpriseRun>;
   ownedSessionRead(sessionId: string, signal: AbortSignal): Promise<{ readonly sessionId: string; readonly epoch: object; readonly signal: AbortSignal; readonly expiresAt: string }>;
   readPinnedSnapshot(sessionId: string, ref: Pick<EnterpriseSourceRef, 'materialId' | 'revisionId'>, signal: AbortSignal): Promise<EnterpriseSourceRef & { readonly text: string }>;

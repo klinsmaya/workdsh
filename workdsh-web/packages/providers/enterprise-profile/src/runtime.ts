@@ -10,7 +10,7 @@ import { renderSkillContent } from '@deepseek-ai/dsh-skill';
 import { EnterpriseModelAdapter, decodeModelSse, type ModelPolicy } from '@afos/model-adapter';
 import type { ConnectionRpcHandlerResult } from '@deepseek-ai/dsh-client-connection';
 import { ENTERPRISE_DRAFT_MAX_BYTES, type EnterpriseDraftState, type EnterpriseDraftView, type EnterpriseSourceRef } from 'workdsh-contracts/enterprise-drafts';
-import { draftView, type MainDraftRecord, type OfficialTurnEvent } from './main-capabilities.js';
+import { draftView, type MainDraftRecord, type OfficialTurnEvent, type MainSessionBindingLease } from './main-capabilities.js';
 import { EnterpriseProfileError } from './snapshot-authority.js';
 import { ENTERPRISE_TOOL_NAMES } from './profile-policy.js';
 import './authority-service.js';
@@ -34,7 +34,11 @@ export class EnterpriseDraftRuntime extends Service {
   readonly #lifetime = new AbortController();
   readonly #handles = new Map<string, AgentHandle>();
   readonly #tasks = new Set<Promise<void>>();
+  readonly #publications = new Map<Agent, MainSessionBindingLease>();
+  readonly #projections = new Map<Agent, Promise<void>>();
   readonly #policy: ModelPolicy;
+  readonly #hostSignal: AbortSignal | undefined;
+  readonly #operationCutoff: AbortSignal | undefined;
   #starting = false;
   #active: Agent | undefined;
   #lastSyncAt: string | undefined;
@@ -44,6 +48,8 @@ export class EnterpriseDraftRuntime extends Service {
     super(ctx, 'afosDraftRuntime');
     if (!config?.model || !Number.isSafeInteger(config.model.maxTokens) || config.model.maxTokens < 1) fail();
     this.#policy = Object.freeze({ ...config.model });
+    this.#hostSignal = ctx.afosMainBusiness.hostSignal;
+    this.#operationCutoff = ctx.afosMainBusiness.asyncAccess ? this.#hostSignal : undefined;
     const content = readFileSync(new URL('../resources/skills/afos-material-draft/SKILL.md', import.meta.url), 'utf8');
     ctx.skills.register({ name: 'afos-material-draft', description: 'Produce an internal draft from pinned enterprise text materials.', source: 'bundled', content });
     ctx.provide('afosProfileBridge', Object.freeze({
@@ -52,13 +58,24 @@ export class EnterpriseDraftRuntime extends Service {
       prepareDraft: (sessionId: string, text: string, refs: readonly EnterpriseSourceRef[], signal: AbortSignal) => ctx.afosMainBusiness.prepareDraft(sessionId, text, refs, signal),
     }));
     const owner = this;
+    // Publication is a captured limited lease, never a second Agent execution state.
+    ctx.on('agent/pre-step', async (payload, next) => {
+      try { owner.ready(payload.agent); return next(); }
+      catch { payload.agent.cancel({ kind: 'hook', reason: 'afos-publication-not-ready' }); return { kind: 'reject' }; }
+    }, { global: true, prepend: true });
+    ctx.tools.guard(exec => { try { if (!exec.agent) fail(); owner.ready(exec.agent); return undefined; }
+      catch { return 'AFOS Main publication was not acknowledged.'; } });
+    ctx.on('tools/pre-execute', async (exec, next) => {
+      try { if (!exec.agent) fail(); owner.ready(exec.agent); return next(); }
+      catch { return { kind: 'deny', reason: 'AFOS Main publication was not acknowledged.' }; }
+    }, { global: true, prepend: true });
     // This public waterfall receives the original frozen LOOP envelope before
     // official message/tool projection may copy it and lose its WeakSet marker.
     ctx.on('llm/stream', (options, next) => {
       const handle = options.sessionId ? owner.#handles.get(String(options.sessionId)) : undefined;
       if (!isAgentLoopRequest(options) || !handle || ctx.agents.get(handle.agent.id) !== handle.agent
         || owner.#active !== handle.agent || options.provider !== owner.#policy.provider || options.model !== owner.#policy.model) fail();
-      owner.signal(options.signal).throwIfAborted();
+      owner.ready(handle.agent); owner.signal(options.signal).throwIfAborted();
       return next();
     }, { global: true, prepend: true });
     class ManagedAdapter extends LlmAdapter {
@@ -72,13 +89,13 @@ export class EnterpriseDraftRuntime extends Service {
         if (!options.sessionId) fail();
         const sessionId = String(options.sessionId), handle = owner.#handles.get(sessionId);
         if (!handle || ctx.agents.get(handle.agent.id) !== handle.agent || owner.#active !== handle.agent) fail();
-        const signal = owner.signal(options.signal);
+        owner.ready(handle.agent); const signal = owner.signal(options.signal);
         const run = await ctx.afosMainBusiness.sessionRun(sessionId, signal);
         const adapter = new EnterpriseModelAdapter(owner.#policy, {
           getRun: () => ({ runId: run.runId, attempt: run.attempt }),
           assertCurrent: async (expected, suppliedSignal) => {
             if (ctx.agents.get(handle.agent.id) !== handle.agent || owner.#active !== handle.agent) fail();
-            const current = await ctx.afosMainBusiness.sessionRun(sessionId, owner.signal(suppliedSignal));
+            owner.ready(handle.agent); const current = await ctx.afosMainBusiness.sessionRun(sessionId, owner.signal(suppliedSignal));
             if (current.runId !== expected.runId || current.attempt !== expected.attempt) fail();
           },
           transport: { async* stream(request, suppliedSignal) {
@@ -102,8 +119,15 @@ export class EnterpriseDraftRuntime extends Service {
     ctx.llm.registerAdapter([this.#policy.provider], new ManagedAdapter());
     ctx.on('session/event', (session, event) => {
       if (this.#handles.get(String(session.id))?.agent.session !== session || !['turn/start', 'turn/end'].includes(event.type)) return;
-      try { ctx.afosMainBusiness.projectSessionEvent(String(session.id), event as OfficialTurnEvent); }
-      catch { this.#active?.cancel({ kind: 'hook', reason: 'afos-main-projection-cutoff' }); }
+      const agent = this.#handles.get(String(session.id))!.agent;
+      if (ctx.afosMainBusiness.asyncAccess) {
+        const work = (this.#projections.get(agent) ?? Promise.resolve()).then(() => ctx.afosMainBusiness.asyncAccess!.projectSessionEvent(String(session.id), event as OfficialTurnEvent, this.signal()));
+        this.#projections.set(agent, work);
+        void work.catch(() => agent.cancel({ kind: 'hook', reason: 'afos-main-projection-cutoff' }));
+      } else {
+        try { ctx.afosMainBusiness.projectSessionEvent(String(session.id), event as OfficialTurnEvent); }
+        catch { agent.cancel({ kind: 'hook', reason: 'afos-main-projection-cutoff' }); }
+      }
     });
     ctx.effect(() => async () => {
       this.#lifetime.abort(); this.#active?.cancel({ kind: 'hook', reason: 'afos-host-disposed' });
@@ -111,7 +135,16 @@ export class EnterpriseDraftRuntime extends Service {
       await Promise.allSettled([...this.#handles.values()].map(handle => handle.dispose())); this.#handles.clear();
     }, 'afosDraftRuntime.dispose');
   }
-  private signal(signal?: AbortSignal): AbortSignal { return AbortSignal.any([this.#lifetime.signal, ...(signal ? [signal] : [])]); }
+  private signal(signal?: AbortSignal): AbortSignal { return AbortSignal.any([this.#lifetime.signal, ...(this.#operationCutoff ? [this.#operationCutoff] : []), ...(signal ? [signal] : [])]); }
+  private ready(agent: Agent): void {
+    const lease = this.#publications.get(agent);
+    if (!lease || this.ctx.agents.get(agent.id) !== agent || this.#handles.get(String(agent.session.id))?.agent !== agent || this.#active !== agent) fail();
+    this.#hostSignal?.throwIfAborted(); this.signal(lease.signal).throwIfAborted(); lease.assertReady?.();
+  }
+  private async releasePublication(lease: MainSessionBindingLease): Promise<void> {
+    if (lease.release) { try { await lease.release(this.signal()); } finally { lease.dispose(); } }
+    else lease.dispose();
+  }
   /** Fixed latest successful local start; a wire caller cannot select this value. */
   nativeSessionId = (): string | undefined => {
     const id = this.#nativeSessionId, handle = id ? this.#handles.get(id) : undefined;
@@ -123,7 +156,7 @@ export class EnterpriseDraftRuntime extends Service {
   }
   private async state(): Promise<EnterpriseDraftState> {
     if (!this.#offline) {
-      try { await this.ctx.afosMainBusiness.currentAuthority(this.signal()); }
+      try { await this.ctx.afosMainBusiness.currentAuthority(this.signal()); await this.ctx.afosMainBusiness.asyncAccess?.refreshLocalState(this.signal()); }
       catch (error) {
         const local = this.ctx.afosMainBusiness.localState();
         if (local.authority !== 'offline') throw error;
@@ -142,7 +175,7 @@ export class EnterpriseDraftRuntime extends Service {
     for (const ref of value.sources) source(ref);
     if (new Set(value.sources.map(ref => JSON.stringify([ref.materialId, ref.revisionId]))).size !== value.sources.length) fail();
     const signal = this.signal(callerSignal); this.#starting = true;
-    let handle: AgentHandle | undefined, lease: { commit(): void; dispose(): void } | undefined, runId: string | undefined;
+    let handle: AgentHandle | undefined, lease: MainSessionBindingLease | undefined, runId: string | undefined;
     try {
       for (const ref of value.sources) await this.ctx.afosMainBusiness.readRevision(ref, signal);
       const run = await this.ctx.afosMainBusiness.authorize(value.sources, value.operationId, signal);
@@ -164,25 +197,31 @@ export class EnterpriseDraftRuntime extends Service {
           lease = await this.ctx.afosMainBusiness.prepareSessionBinding(run.runId, String(sessionId), signal);
           return { commit: () => { this.ctx.afosProfileAuthority.identity.assertCurrentActor(actor); signal.throwIfAborted(); lease!.commit(); } };
         } });
-      this.#handles.set(String(sessionId), handle); this.#active = handle.agent;
+      if (!lease) fail();
+      await lease.acknowledge?.(signal); signal.throwIfAborted(); lease.assertReady?.();
+      this.#handles.set(String(sessionId), handle); this.#active = handle.agent; this.#publications.set(handle.agent, lease);
       await this.ctx.afosMainBusiness.prepareDraft(String(sessionId), '', run.inputRefs, signal);
       signal.throwIfAborted();
       const draft = this.ctx.afosMainBusiness.drafts().find(item => item.sessionId === String(sessionId)); if (!draft) fail();
       const prompt = `${value.goal}\n\nAuthorized source references (material content must be read with the fixed tool):\n${JSON.stringify(run.inputRefs)}`;
       handle.agent.followup(createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: prompt }] }));
       const current = handle, publication = lease!;
-      const task = current.agent.whenIdle().then(() => undefined).finally(() => {
-        if (this.#active === current.agent) this.#active = undefined;
-        publication.dispose(); this.#tasks.delete(task);
+      const task = current.agent.whenIdle().then(() => undefined).finally(async () => {
+        try { await this.#projections.get(current.agent); }
+        finally {
+          this.#projections.delete(current.agent); this.#publications.delete(current.agent);
+          if (this.#active === current.agent) this.#active = undefined;
+          try { await this.releasePublication(publication); } finally { this.#tasks.delete(task); }
+        }
       });
       this.#tasks.add(task); void task.catch(() => undefined);
       const view = draftView(draft);
       this.#nativeSessionId = String(sessionId);
       return view;
     } catch (error) {
-      if (handle) { handle.agent.cancel({ kind: 'hook', reason: 'afos-create-failed' }); await handle.dispose(); this.#handles.delete(String(handle.agent.id)); if (this.#active === handle.agent) this.#active = undefined; }
-      lease?.dispose();
-      if (runId) { try { this.ctx.afosMainBusiness.releaseRunAdmission(runId); } catch { /* Account cutoff already released its admission. */ } }
+      if (handle) { handle.agent.cancel({ kind: 'hook', reason: 'afos-create-failed' }); await handle.dispose(); this.#handles.delete(String(handle.agent.session.id)); this.#publications.delete(handle.agent); if (this.#active === handle.agent) this.#active = undefined; }
+      if (lease) { try { await this.releasePublication(lease); } catch { /* Main cutoff disposes its original lease. */ } }
+      if (runId) { try { if (this.ctx.afosMainBusiness.asyncAccess) await this.ctx.afosMainBusiness.asyncAccess.releaseRunAdmission(runId, this.signal()); else this.ctx.afosMainBusiness.releaseRunAdmission(runId); } catch { /* Account cutoff already released its admission. */ } }
       throw error;
     } finally { this.#starting = false; }
   }
@@ -200,12 +239,15 @@ export class EnterpriseDraftRuntime extends Service {
       else if (endpoint === 'afos/drafts/edit') {
         exact(payload, ['draftId', 'content']); id(payload.draftId); this.own(payload.draftId);
         if (typeof payload.content !== 'string' || Buffer.byteLength(payload.content) > ENTERPRISE_DRAFT_MAX_BYTES) fail();
-        value = draftView(this.ctx.afosMainBusiness.editDraft(payload.draftId, payload.content));
+        value = draftView(this.ctx.afosMainBusiness.asyncAccess ? await this.ctx.afosMainBusiness.asyncAccess.editDraft(payload.draftId, payload.content, signal) : this.ctx.afosMainBusiness.editDraft(payload.draftId, payload.content));
       } else if (endpoint === 'afos/drafts/cancel') {
         exact(payload, ['draftId']); id(payload.draftId); const draft = this.own(payload.draftId), handle = this.#handles.get(draft.sessionId);
         if (!handle || this.#active !== handle.agent) fail();
-        this.ctx.afosMainBusiness.markCancellation(draft.sessionId, false); handle.agent.cancel({ kind: 'user' });
-        await handle.agent.whenIdle(); signal.throwIfAborted(); this.ctx.afosMainBusiness.markCancellation(draft.sessionId, true);
+        if (this.ctx.afosMainBusiness.asyncAccess) await this.ctx.afosMainBusiness.asyncAccess.markCancellation(draft.sessionId, false, signal); else this.ctx.afosMainBusiness.markCancellation(draft.sessionId, false); handle.agent.cancel({ kind: 'user' });
+        await handle.agent.whenIdle(); await this.#projections.get(handle.agent); signal.throwIfAborted();
+        // Child completion comes from the original turn/end projection, not a caller boolean.
+        if (!this.ctx.afosMainBusiness.asyncAccess) this.ctx.afosMainBusiness.markCancellation(draft.sessionId, true);
+        else await this.ctx.afosMainBusiness.asyncAccess.refreshLocalState(signal);
         value = draftView(this.own(draft.draftId));
       } else if (endpoint === 'afos/drafts/archive') {
         exact(payload, ['draftId', 'expectedSha256']); id(payload.draftId); const draft = this.own(payload.draftId);

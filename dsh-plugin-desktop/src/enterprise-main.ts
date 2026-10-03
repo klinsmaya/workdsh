@@ -12,6 +12,8 @@ export interface EnterpriseOwnedSessionRead {
   readonly expiresAt: string
 }
 export interface EnterpriseHostBusinessCapabilities {
+  /** Captured execution lifetime for the private Host owner; never exported on wire. */
+  readonly hostSignal: AbortSignal
   currentAuthority(signal: AbortSignal): Promise<CurrentAuthoritySnapshot>
   localState(): { readonly project: EnterpriseProject; readonly authority: 'current' | 'offline'; readonly lastSyncAt: string }
   authorize(refs: readonly SourceRef[], operationId: string, signal: AbortSignal): Promise<RunAuthorization>
@@ -390,6 +392,7 @@ export class EnterpriseMainSession {
       return run
     }
     return Object.freeze({
+      hostSignal: readSignal,
       currentAuthority: async (signal: AbortSignal) => { activeEnterprise(); const value = await this.currentAuthority(this.enterpriseSignal(signal)); activeEnterprise(); return value },
       localState: () => {
         active()
