@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { lstat, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createHash, randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join, basename } from 'node:path';
 import { AgentBridge, digest } from '../core.ts';
 import { EnterpriseMainSession } from '../../../../../dsh-plugin-desktop/src/enterprise-main.ts';
 import { RefreshTokenVault } from '../../../../../dsh-plugin-desktop/src/desktop-auth.ts';
@@ -10,7 +10,17 @@ import { encodeModelSse } from '@afos/model-adapter';
 
 // In-memory server/IdP replies, real PKCE loopback/Broker/Main/Recovery; no deployment acceptance.
 export async function fixture(options={}) {
-  const base=await mkdtemp(join(tmpdir(),'afos-main-flow-'));
+  const reused=options.base!==undefined;
+  const base=reused?options.base:await mkdtemp(join(tmpdir(),'afos-main-flow-'));
+  const marker=join(base,'.afos-owned-test-fixture');
+  if(reused){
+    assert.equal(typeof base,'string');assert.equal(isAbsolute(base),true);
+    assert.match(basename(base),/^afos-main-flow-[A-Za-z0-9]+$/u);
+    const info=await lstat(base);assert.equal(info.isDirectory(),true);assert.equal(info.isSymbolicLink(),false);
+    if(process.platform!=='win32')assert.equal(info.mode&0o077,0);
+    assert.equal(await readFile(marker,'utf8'),'afos-local-fixture-v1\n');
+    assert.equal(options.keepBase,true,'a cold consumer cannot own parent cleanup');
+  }else await writeFile(marker,'afos-local-fixture-v1\n',{flag:'wx',mode:0o600});
   const issuer='https://enterprise.example/api';
   const config={contractVersion:'afos.desktop-config.v1',auth:{issuer,clientId:'desktop',resource:`${issuer}/afos`,scope:'afos offline_access'},releaseId:'fixed-release',policyRevision:'afos.policy.v1'};
   const evidence={issuer,principalId:'alice',clientId:'desktop',grantId:'grant',issuedAt:Date.now(),tokenId:'token',expiresAt:Date.now()+3600000};
@@ -54,5 +64,5 @@ export async function fixture(options={}) {
   const ready=async()=>{await main.signIn();return main.selectProject(project.id);};
   const ref={materialId:material.id,revisionId:material.revisionId,sha256:material.hash};
   const bind=async(runId,sessionId)=>{if(!business){capability={ingressValidated:true,sandbox:'full'};await main.startHost();}const lease=await business.prepareSessionBinding(runId,sessionId,new AbortController().signal);lease.commit();return lease;};
-  return {main,base,config,tables,calls,ref,ready,host,vault,bind,business:()=>business,principal:value=>{evidence.principalId=value;},stops:()=>stops,starts:()=>starts,revoke:()=>{active=false;},disconnect:()=>{connected=false;},reconnect:()=>{connected=true;},capability:value=>{capability=value;},startHook:value=>{startHook=value;},cleanup:async()=>{await main.logout();await rm(base,{recursive:true,force:true});}};
+  return {main,base,config,tables,calls,ref,ready,host,vault,bind,business:()=>business,principal:value=>{evidence.principalId=value;},stops:()=>stops,starts:()=>starts,revoke:()=>{active=false;},disconnect:()=>{connected=false;},reconnect:()=>{connected=true;},capability:value=>{capability=value;},startHook:value=>{startHook=value;},cleanup:async()=>{await main.logout();if(!options.keepBase)await rm(base,{recursive:true,force:true});}};
 }
