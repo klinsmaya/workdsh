@@ -4,6 +4,7 @@ import { fork, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline';
 import { once } from 'node:events';
+import { setTimeout as delay } from 'node:timers/promises';
 import { fixture } from './desktop-fixture.mjs';
 import { attachMainBusinessIpc } from '../../../../../workdsh-web/packages/providers/enterprise-profile/dist/main-ipc.js';
 const policy={provider:'afos-managed',model:'fixed-model',maxTokens:64};
@@ -21,7 +22,7 @@ async function composed(t,{failAck=false,wake=false,dropAck=false,model}={}){
   lines.on('line',line=>{if(!line.startsWith('AFOS_RESULT '))return;const value=JSON.parse(line.slice(12));if(waiting.length)waiting.shift()(value);else received.push(value);});
   next=()=>received.length?Promise.resolve(received.shift()):new Promise(resolve=>waiting.push(resolve));
   const real=failAck?{...business,prepareSessionBinding:async(...args)=>{const lease=await business.prepareSessionBinding(...args);return{commit(){throw new Error('fixture-main-private-secret-ack-fail');},dispose:lease.dispose};}}:business;
-  const endpoint={send:message=>{wire.push(message);if(dropAck&&message.kind==='reply'&&message.method==='publication.ack'&&message.ok)return Promise.resolve();return new Promise((resolve,reject)=>child.send(message,error=>error?reject(error):resolve()));},messages:listener=>{const wrapper=value=>{wire.push(value);listener(value);};child.on('message',wrapper);return()=>child?.off('message',wrapper);},disconnected:listener=>{child.on('disconnect',listener);return()=>child?.off('disconnect',listener);}};
+  const endpoint={send:message=>{wire.push({...message,observedAt:Date.now()});if(dropAck&&message.kind==='reply'&&message.method==='publication.ack'&&message.ok)return Promise.resolve();return new Promise((resolve,reject)=>child.send(message,error=>error?reject(error):resolve()));},messages:listener=>{const wrapper=value=>{wire.push({...value,observedAt:Date.now()});listener(value);};child.on('message',wrapper);return()=>child?.off('message',wrapper);},disconnected:listener=>{child.on('disconnect',listener);return()=>child?.off('disconnect',listener);}};
   channel=await attachMainBusinessIpc(endpoint,real,signal,{root:layout.profile,model:policy});
   const ready=await Promise.race([next(),once(child,'exit').then(([code])=>{throw new Error(`child exit ${code}: ${stdout}\n${stderr}`);})]);assert.equal(ready.ready,true);assert.notEqual(ready.pid,process.pid);
  };f.startHook(bootHost);
@@ -35,6 +36,40 @@ test('real Node Main → public Loader → original Agent/tools/model → durabl
  const state=await f.invoke('state',{});assert.equal(state.ok,true,JSON.stringify(state));const draft=state.value.drafts[0];assert.equal(draft.content,'Main-owned IPC durable draft.');assert.equal(draft.execution,'completed_local');assert.equal(f.modelCalls(),3);const late=await f.command('late-cancel',{sessionId:draft.sessionId});assert.equal(late.result.execution,'completed_local');
  const edit=await f.invoke('edit',{draftId:draft.draftId,content:'Human-reviewed immutable mirror ACK.'});assert.equal(edit.ok,true,JSON.stringify(edit));assert.equal(edit.value.content,'Human-reviewed immutable mirror ACK.');assert.equal(f.business().drafts()[0].content,edit.value.content);assert.equal(f.tables.artifacts.size,0);
  const wire=JSON.stringify(f.wire);assert.ok(!wire.includes('fixture-access'));assert.ok(!wire.includes('fixture-refresh'));assert.equal(f.wire.filter(v=>v.method==='publication.ack'&&v.kind==='request').length,1);
+});
+test('real original Core survives sixty seconds only through renewed Main-owned publication',{timeout:100000},async t=>{
+ const f=await composed(t,{model:async(_request,signal)=>(async function*(){
+  yield {type:'block-start',index:0,blockType:'text'};
+  for(let n=0;n<33;n++){await delay(2000,undefined,{signal});yield {type:'text-delta',index:0,text:'.'};}
+  yield {type:'block-end',index:0,block:{type:'text',text:'.'.repeat(33)}};
+  yield {type:'finish',reason:{kind:'stop'}};
+ })()});
+ const startedAt=Date.now();
+ const started=await f.invoke('start',{sources:[f.ref],goal:'Continue an original local Agent past the old sixty-second publication cutoff.',operationId:'ipc-core-long-publication'});
+ assert.equal(started.ok,true,JSON.stringify(started));
+ const idle=await f.command('idle',{sessionId:started.value.sessionId});
+ assert.equal(idle.error,undefined,JSON.stringify(idle));
+ assert.equal(idle.result.events.at(-1).data.reason.kind,'completed',JSON.stringify(idle));
+ const elapsedMs=Date.now()-startedAt;assert.ok(elapsedMs>60000,`actual elapsed ${elapsedMs}ms`);
+ const renewals=f.wire.filter(v=>v.kind==='request'&&v.method==='publication.renew');
+ assert.ok(renewals.length>=2,JSON.stringify(renewals));
+ const ticket=f.wire.find(v=>v.kind==='request'&&v.method==='publication.ack').args.ticket;
+ for(const request of renewals){
+  assert.equal(request.args.ticket,ticket);
+  const result=f.wire.find(v=>v.kind==='reply'&&v.callId===request.callId);
+  assert.equal(result?.ok,true,JSON.stringify(result));assert.equal(result.value.sessionId,started.value.sessionId);
+  const ttl=Date.parse(result.value.expiresAt)-result.observedAt;
+  assert.ok(ttl>0&&ttl<=60000,`renewed TTL ${ttl}`);
+ }
+ assert.equal(f.wire.filter(v=>v.kind==='request'&&v.method==='publication.ack').length,1);
+ assert.equal(f.modelCalls(),1);assert.equal(f.tables.runs.size,1);
+ assert.equal((await f.command('stats')).result.agents,1);
+ const state=await f.invoke('state',{});assert.equal(state.ok,true,JSON.stringify(state));
+ assert.equal(state.value.drafts[0].execution,'completed_local');assert.equal(f.tables.artifacts.size,0);
+ assert.ok(!JSON.stringify(f.wire).includes('fixture-access'));assert.ok(!JSON.stringify(f.wire).includes('fixture-refresh'));
+ const releasedAt=f.wire.findLastIndex(v=>v.kind==='request'&&v.method==='publication.release');
+ assert.ok(releasedAt>=0);assert.ok(!f.wire.slice(releasedAt+1).some(v=>v.kind==='request'&&v.method==='publication.renew'));
+ console.log('AFOS_LONG_PUBLICATION '+JSON.stringify({elapsedMs,renewals:renewals.length,runs:f.tables.runs.size,modelCalls:f.modelCalls(),sessionId:started.value.sessionId}));
 });
 test('real Core failed Main ACK refuses Runtime start with creation-listener wake and zero model/tool action',{timeout:20000},async t=>{
  const f=await composed(t,{failAck:true,wake:true});const started=await f.invoke('start',{sources:[f.ref],goal:'Must refuse before any model or tool execution.',operationId:'ipc-core-failed-ack'});assert.equal(started.ok,false);assert.equal(f.modelCalls(),0);const stats=await f.command('stats');assert.equal(stats.result.wakes,1);assert.equal(stats.result.toolCalls,0);assert.equal(stats.result.agents,0);assert.equal(f.business().drafts().length,0);assert.ok(!JSON.stringify(f.wire).includes('fixture-main-private-secret-ack-fail'));
@@ -55,8 +90,12 @@ test('same-account real Host restart and subsequent account switch invalidate pr
 });
 
 test('lost real Main publication ACK stays unknown with no tool/model work and releases original reservation',{timeout:20000},async t=>{
- const f=await composed(t,{dropAck:true,wake:true});const result=await f.invoke('start',{sources:[f.ref],goal:'No action before delivered Main ACK.',operationId:'ipc-core-lost-ack'});assert.equal(result.ok,false);assert.equal(f.modelCalls(),0);assert.equal((await f.command('stats')).result.toolCalls,0);assert.equal(f.business().drafts().length,0);assert.ok(f.wire.some(v=>v.kind==='request'&&v.method==='publication.release'));
- const runId=[...f.tables.runs.keys()][0];await assert.rejects(f.business().sessionRun('not-published',new AbortController().signal));const admitted=await f.business().authorize([f.ref],'ipc-after-lost-ack',new AbortController().signal);assert.notEqual(admitted.runId,runId);f.business().releaseRunAdmission(admitted.runId);assert.equal(f.tables.artifacts.size,0);
+ const f=await composed(t,{dropAck:true,wake:true});const result=await f.invoke('start',{sources:[f.ref],goal:'No action before delivered Main ACK.',operationId:'ipc-core-lost-ack'});assert.equal(result.ok,false);assert.equal(f.modelCalls(),0);assert.equal((await f.command('observations')).result.toolCalls,0);assert.equal(f.business().drafts().length,0);
+ // The undelivered ACK expires at fresh authority (5s), before the child call deadline.
+ // Parent cutoff owns disposal even when a child can no longer send release.
+ assert.ok(f.wire.some(v=>v.kind==='cutoff'));assert.equal(f.wire.filter(v=>v.kind==='request'&&v.method==='publication.renew').length,0);
+ const ack=f.wire.find(v=>v.kind==='reply'&&v.method==='publication.ack'&&v.ok);assert.ok(ack);
+ const runId=[...f.tables.runs.keys()][0];await assert.rejects(f.business().sessionRun(ack.value.sessionId,new AbortController().signal));const admitted=await f.business().authorize([f.ref],'ipc-after-lost-ack',new AbortController().signal);assert.notEqual(admitted.runId,runId);f.business().releaseRunAdmission(admitted.runId);assert.equal(f.tables.artifacts.size,0);
 });
 test('failed real child Core startup cuts off new and prior generations and permits independent later start',{timeout:20000},async t=>{
  // This regression must exercise GC even when the enclosing suite omits the flag.

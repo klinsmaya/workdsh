@@ -87,6 +87,16 @@ account binding own this read; a completed or expired execution Run does not.
 Failed Host startup revokes captured grants before waiting for disposal. This
 capability alone does not mount native Conversation or authorize desktop activation.
 
+The optional private Main IPC publication renews only a delivered, committed
+ticket against fresh authority and the exact original Session/Run, bounded by
+the authority deadline, absolute server Run expiry and 60 seconds. Exact-ticket
+release synchronously revokes the Main lease before authority reads or queued
+business writes. A released renewal's unchanged 10-second deadline cannot close
+a newer ticket. Real fork regressions cover release across expiry and that call
+deadline; the original Core flow runs for 66 seconds with one Run and one Agent.
+IdP, ACL and model replies remain controlled fixtures. See [MAIN_IPC.md](MAIN_IPC.md)
+for the protocol, remaining production scope and rollback.
+
 Supporting tasks: D01/D04/D05/D07/D08/D09/D10. Formal AT-03/07/08/10/11/13–18/20/
 22–23/31/33–47 are not promoted by these headless checks. Native sandbox,
 Windows/macOS, real IdP/NocoBase/SQL/vendor, complete Client assembly, signatures,

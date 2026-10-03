@@ -56,6 +56,13 @@ workspace 前置，再运行十八项真实官方运行时集成检查。身份�
 迟到原版 render/stream 的取消、已知 refresh token 拒绝及并发拒绝/断网取消。夹具/Linux 证据不算目标桌面验收。DSH 保持锁定；消费方 Cordis4.0.4 已符合发布包 ~4.0.4 peer 并在原版 Core
 及现有消费模块验证。Linux 源码证据不替代目标 Windows/macOS 安装包兼容验证。
 
+可选 Main 私有 IPC publication 仅为已送达 ACK 的 committed ticket 续期，每次重查
+当前权限和精确原 Session/Run，受权限期限、服务器 Run 的绝对期限和 60 秒共同约束。
+精确 ticket release 在权限读取或排队业务写入前同步撤销 Main lease；已 release 的
+renew 保持原 10 秒调用期限，但不能关闭新 ticket。真实 fork 回归覆盖 release 跨到期点
+与跨调用期限；原版 Core 流运行 66 秒，只有一个 Run 和一个 Agent。IdP、ACL 与模型
+回复仍为受控夹具。协议、生产剩余项及回滚见 [MAIN_IPC.zh-CN.md](MAIN_IPC.zh-CN.md)。
+
 支持任务 D01/D04/D05/D07/D08/D09/D10。正式 AT-03/07/08/10/11/13–18/20/22–23/
 31/33–47 不因这些检查提升。原生沙箱、Windows/macOS、真实 IdP/NocoBase/SQL/模型、
 完整 Client 装配、签名、许可和整体安全门槛仍未关闭；P1G3 未通过。

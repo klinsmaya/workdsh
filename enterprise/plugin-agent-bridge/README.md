@@ -36,3 +36,15 @@ stages. The 13 AFOS-SQL checks support AT-18/20/22/33/38/39/47 without promoting
 formal acceptance. The owning product manifest and lock remain unchanged. Logs,
 staging locks and source hashes are retained for review. Rollback removes the
 four optional test files; no business data is deleted.
+
+The optional `src/server/__tests__/main-ipc-flow.integration.mjs` suite exercises
+the original published Core/Loader/Agent/Session through two real Node processes
+and Main-owned private IPC. Its 66-second stream renews one committed publication
+for one Run and one Agent under fresh authority and the absolute server Run
+expiry. Release and stale-renewal races are covered in the provider's real fork
+suite. Identity, ACL repositories and model replies are controlled fixtures;
+these checks do not certify native Client/Conversation, target desktop, real
+enterprise credentials or a paid model. This publication-lifetime scope leaves
+the original acceptance ledger at 2 PASS / 12 BLOCKED / 46 NOT_RUN and G3 unpassed.
+Rollback omits or reverses only the optional source patch and preserves Sessions,
+Recovery drafts, credentials and server receipts.

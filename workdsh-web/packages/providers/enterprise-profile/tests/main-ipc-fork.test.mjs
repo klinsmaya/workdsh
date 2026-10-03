@@ -10,15 +10,20 @@ async function fixture(t,{failAck=false,corrupt,block=false,grantTTL=60000,runTT
  const lines=createInterface({input:child.stdout}),received=[],waiting=[];let stderr='';child.stderr.on('data',v=>stderr+=v);
  lines.on('line',line=>{const value=JSON.parse(line);if(waiting.length)waiting.shift()(value);else received.push(value);});
  const next=()=>received.length?Promise.resolve(received.shift()):new Promise(resolve=>waiting.push(resolve));
- const host=new AbortController(),start=new AbortController(),stats={commits:0,disposes:0,fresh:0,cancelled:0,modelAborts:0,cutoffs:0,modelFactories:0};
- const business={hostSignal:host.signal,sessionRun:async()=>{if(ackReadFailure&&stats.commits)throw new Error('private-post-commit-recheck-failure');if(gateOpen)await new Promise(resolve=>setTimeout(resolve,50));return {runId:'run-1',attempt:1,projectId:'project-1',releaseId:'release-1',policyRevision:'policy-1',inputRefs:[],binding:authority().binding,expiresAt:new Date(Date.now()+runTTL).toISOString()};},modelBytes:(_session,_request,signal)=>{stats.modelFactories++;return (async function*(){if(modelBlocked)await new Promise((resolve,reject)=>signal.addEventListener('abort',()=>{stats.modelAborts++;reject(new Error('private-model-source-error'));},{once:true}));else yield new Uint8Array(modelChunkBytes||1).fill(7);})();},currentAuthority:async signal=>{stats.fresh++;if(block&&stats.fresh>1)await new Promise((resolve,reject)=>{signal.addEventListener('abort',()=>{stats.cancelled++;if(block!=='noncooperative')reject(new Error('fixture-secret-must-not-cross'));},{once:true});});return {...authority(),expiresAt:new Date(Date.now()+grantTTL).toISOString()};},localState:()=>({project:{id:'project-1',name:'Project'},authority:'current',lastSyncAt:new Date().toISOString()}),drafts:()=>[],prepareSessionBinding:async()=>({commit(){if(failAck)throw new Error('fixture-secret-ack-failure');stats.commits++;},dispose(){stats.disposes++;}})};
- const endpoint={send:message=>{if(message.kind==='cutoff')stats.cutoffs++;return new Promise((resolve,reject)=>child.send(corrupt?.(message)??message,error=>error?reject(error):resolve()));},messages:listener=>{child.on('message',listener);return()=>child.off('message',listener);},disconnected:listener=>{child.on('disconnect',listener);return()=>child.off('disconnect',listener);}};
+ const host=new AbortController(),start=new AbortController(),stats={commits:0,disposes:0,fresh:0,cancelled:0,modelAborts:0,cutoffs:0,modelFactories:0,renewals:0};
+ // A server Run has one absolute expiry; reading it must never extend its lifetime.
+ let runExpiresAt;
+ const business={hostSignal:host.signal,sessionRun:async()=>{if(ackReadFailure&&stats.commits)throw new Error('private-post-commit-recheck-failure');if(gateOpen)await new Promise(resolve=>setTimeout(resolve,50));return {runId:'run-1',attempt:1,projectId:'project-1',releaseId:'release-1',policyRevision:'policy-1',inputRefs:[],binding:authority().binding,expiresAt:runExpiresAt??new Date(Date.now()+runTTL).toISOString()};},modelBytes:(_session,_request,signal)=>{stats.modelFactories++;return (async function*(){if(modelBlocked)await new Promise((resolve,reject)=>signal.addEventListener('abort',()=>{stats.modelAborts++;reject(new Error('private-model-source-error'));},{once:true}));else yield new Uint8Array(modelChunkBytes||1).fill(7);})();},currentAuthority:async signal=>{stats.fresh++;if(block&&stats.fresh>1)await new Promise((resolve,reject)=>{signal.addEventListener('abort',()=>{stats.cancelled++;if(block!=='noncooperative')reject(new Error('fixture-secret-must-not-cross'));},{once:true});});return {...authority(),expiresAt:new Date(Date.now()+grantTTL).toISOString()};},localState:()=>({project:{id:'project-1',name:'Project'},authority:'current',lastSyncAt:new Date().toISOString()}),drafts:()=>[],prepareSessionBinding:async()=>{runExpiresAt??=new Date(Date.now()+runTTL).toISOString();return {commit(){if(failAck)throw new Error('fixture-secret-ack-failure');stats.commits++;},dispose(){stats.disposes++;}};}};
+ const endpoint={send:message=>{if(message.kind==='cutoff')stats.cutoffs++;return new Promise((resolve,reject)=>child.send(corrupt?.(message)??message,error=>error?reject(error):resolve()));},messages:listener=>{const wrapped=message=>{if(message.kind==='request'&&message.method==='publication.renew')stats.renewals++;listener(message);};child.on('message',wrapped);return()=>child.off('message',wrapped);},disconnected:listener=>{child.on('disconnect',listener);return()=>child.off('disconnect',listener);}};
  const channel=await attachMainBusinessIpc(endpoint,business,start.signal,{root:'/tmp/afos-private-profile-fixture',model:{provider:'managed',model:'fixed',maxTokens:100}});
  t.after(async()=>{await channel.close();child.kill();if(child.exitCode===null&&child.signalCode===null)await once(child,'exit');assert.equal(stderr,'');});
  const ready=await next();assert.equal(ready.ready,true);assert.notEqual(ready.pid,process.pid);assert.equal(ready.subject,'auth0|用户甲@tenant.example');
- return {child,stats,host,start,channel,next,command:(op,extra={})=>{child.stdin.write(JSON.stringify({op,...extra})+'\n');return next();}};
+ return {child,stats,host,start,channel,business,next,command:(op,extra={})=>{child.stdin.write(JSON.stringify({op,...extra})+'\n');return next();}};
 }
-test('real fork local sync commit waits for Main ACK; Main owns lease commit/release',{timeout:5000},async t=>{const f=await fixture(t);const value=await f.command('lease');assert.deepEqual(value.result,{gated:true,ack:true});assert.equal(f.stats.commits,1);assert.equal(f.stats.disposes,1);assert.ok(f.stats.fresh>=4);});
+test('real fork local sync commit waits for Main ACK; Main owns lease commit/release',{timeout:5000},async t=>{const f=await fixture(t);const value=await f.command('lease');assert.deepEqual(value.result,{gated:true,ack:true});assert.equal(f.stats.commits,1);assert.equal(f.stats.disposes,1);
+ // Hello, prepare and ACK read authority; exact-ticket release only revokes.
+ assert.equal(f.stats.fresh,3);
+});
 test('real fork failed Main publication ACK never readies local lease or leaks source error',{timeout:5000},async t=>{const f=await fixture(t,{failAck:true});const value=await f.command('lease');assert.deepEqual(value.result,{gated:true,ack:false,code:'afos/main-ipc-operation-refused'});assert.equal(f.stats.commits,0);assert.equal(f.stats.disposes,1);assert.ok(!JSON.stringify(value).includes('secret'));});
 test('malformed matching reply settles every pending request and closes channel',{timeout:5000},async t=>{let changed=false;const f=await fixture(t,{corrupt:message=>{if(message.kind==='reply'&&!changed){changed=true;return {...message,snapshot:{invalid:true}};}return message;}});const value=await f.command('two-pending');assert.deepEqual(value.result.map(v=>v.status),['rejected','rejected']);assert.ok(value.result.every(v=>v.code==='afos/main-ipc-cutoff'));});
 test('reply from old generation fails closed and settles pending requests',{timeout:5000},async t=>{const f=await fixture(t,{corrupt:message=>message.kind==='reply'?{...message,generation:'old-generation'}:message});const value=await f.command('two-pending');assert.ok(value.result.every(v=>v.status==='rejected'&&v.code==='afos/main-ipc-cutoff'));});
@@ -28,6 +33,70 @@ test('Main captured Host abort cuts off a pending real child call',{timeout:5000
 
 test('Main prepared ticket expires and releases admission without cooperative child release',{timeout:5000},async t=>{const f=await fixture(t,{grantTTL:150});assert.equal((await f.command('hold-prepare')).result.prepared,true);await new Promise(resolve=>setTimeout(resolve,200));assert.equal(f.stats.disposes,1);assert.equal(f.stats.cutoffs,0);});
 test('committed IPC capability follows earlier Main Run expiry and cuts off child',{timeout:5000},async t=>{const f=await fixture(t,{runTTL:200});assert.equal((await f.command('hold-lease')).result.held,true);await new Promise(resolve=>setTimeout(resolve,250));assert.equal(f.stats.disposes,1);assert.ok(f.stats.cutoffs>=1);assert.equal((await f.command('state')).result.code,'afos/main-ipc-cutoff');});
+test('publication renewal rechecks fresh Main authority and refuses revoked access',{timeout:5000},async t=>{
+ const f=await fixture(t,{grantTTL:300});assert.equal((await f.command('hold-lease')).result.held,true);
+ f.business.currentAuthority=async()=>{throw new Error('fixture-private-revoked-authority');};
+ await new Promise(resolve=>setTimeout(resolve,400));
+ assert.equal(f.stats.renewals,1);assert.equal(f.stats.commits,1);assert.equal(f.stats.disposes,1);
+ assert.ok(f.stats.cutoffs>=1);const state=await f.command('state');assert.equal(state.result.code,'afos/main-ipc-cutoff');
+ assert.ok(!JSON.stringify(state).includes('private-revoked'));
+});
+test('publication renewal cannot transfer a committed session to another Main Run',{timeout:5000},async t=>{
+ const f=await fixture(t,{grantTTL:300});assert.equal((await f.command('hold-lease')).result.held,true);
+ const sessionRun=f.business.sessionRun;f.business.sessionRun=async(...args)=>({...await sessionRun(...args),runId:'run-2'});
+ await new Promise(resolve=>setTimeout(resolve,400));
+ assert.equal(f.stats.renewals,1);assert.equal(f.stats.commits,1);assert.equal(f.stats.disposes,1);
+ assert.equal((await f.command('state')).result.code,'afos/main-ipc-cutoff');
+});
+test('released publication clears renewal and expiry timers without closing unrelated Main access',{timeout:5000},async t=>{
+ const f=await fixture(t,{grantTTL:300});assert.equal((await f.command('hold-lease')).result.held,true);
+ assert.equal((await f.command('release-held')).result.released,true);
+ await new Promise(resolve=>setTimeout(resolve,400));
+ assert.equal(f.stats.renewals,0);assert.equal(f.stats.disposes,1);assert.equal(f.stats.cutoffs,0);
+ assert.equal((await f.command('state')).result.resolved,true);
+});
+test('Host cutoff clears renewal and disposes the existing Main lease exactly once',{timeout:5000},async t=>{
+ const f=await fixture(t,{grantTTL:300});assert.equal((await f.command('hold-lease')).result.held,true);
+ f.host.abort();await new Promise(resolve=>setTimeout(resolve,400));
+ assert.equal(f.stats.renewals,0);assert.equal(f.stats.commits,1);assert.equal(f.stats.disposes,1);
+ assert.equal((await f.command('state')).result.code,'afos/main-ipc-cutoff');
+});
+test('a completed publication released during renewal cannot revive or close unrelated Main access',{timeout:5000},async t=>{
+ const f=await fixture(t,{grantTTL:1500});assert.equal((await f.command('hold-lease')).result.held,true);
+ let entered,finish;const begun=new Promise(resolve=>{entered=resolve;}),gate=new Promise(resolve=>{finish=resolve;});
+ const sessionRun=f.business.sessionRun;
+ f.business.sessionRun=async(...args)=>{entered();await gate;return sessionRun(...args);};
+ await begun;const release=f.command('release-held');await new Promise(resolve=>setTimeout(resolve,20));finish();
+ const result=await release;assert.equal(result.error,undefined,JSON.stringify(result));assert.equal(result.result.released,true);
+ await new Promise(resolve=>setTimeout(resolve,850));
+ assert.equal(f.stats.renewals,1);assert.equal(f.stats.commits,1);assert.equal(f.stats.disposes,1);assert.equal(f.stats.cutoffs,0);
+ assert.equal((await f.command('state')).result.resolved,true);
+});
+test('release crosses a pending renewal and the old expiry without cutting off current Main access',{timeout:6000},async t=>{
+ const f=await fixture(t,{grantTTL:1500});assert.equal((await f.command('hold-lease')).result.held,true);
+ let entered,finish;const begun=new Promise(resolve=>{entered=resolve;}),gate=new Promise(resolve=>{finish=resolve;});
+ const sessionRun=f.business.sessionRun;f.business.sessionRun=async(...args)=>{entered();await gate;return sessionRun(...args);};
+ t.after(()=>finish());await begun;
+ const released=await f.command('release-held');assert.equal(released.error,undefined,JSON.stringify(released));assert.equal(released.result.released,true);
+ // Deliberately cross the previous publication deadline before the renewal resolves.
+ await new Promise(resolve=>setTimeout(resolve,900));finish();await new Promise(resolve=>setTimeout(resolve,50));
+ assert.equal(f.stats.renewals,1);assert.equal(f.stats.commits,1);assert.equal(f.stats.disposes,1);assert.equal(f.stats.cutoffs,0);
+ assert.equal((await f.command('state')).result.resolved,true);assert.equal(f.host.signal.aborted,false);
+});
+test('released noncooperative renewal retains its call deadline without cutting off a new publication',{timeout:15000},async t=>{
+ const f=await fixture(t,{grantTTL:1500});assert.equal((await f.command('hold-lease')).result.held,true);
+ let entered,finish;const begun=new Promise(resolve=>{entered=resolve;}),gate=new Promise(resolve=>{finish=resolve;});
+ const sessionRun=f.business.sessionRun;let delayed=false;
+ f.business.sessionRun=async(...args)=>{if(!delayed){delayed=true;entered();await gate;}return sessionRun(...args);};
+ t.after(()=>finish());await begun;
+ assert.equal((await f.command('release-held')).result.released,true);
+ assert.equal((await f.command('hold-lease')).result.held,true);
+ await new Promise(resolve=>setTimeout(resolve,10300));
+ assert.equal(f.stats.cutoffs,0);assert.equal(f.stats.commits,2);assert.equal(f.host.signal.aborted,false);
+ assert.equal((await f.command('state')).result.resolved,true);
+ finish();await new Promise(resolve=>setTimeout(resolve,50));
+ assert.equal((await f.command('release-held')).result.released,true);assert.equal(f.stats.disposes,2);assert.equal(f.stats.cutoffs,0);
+});
 test('independent parent deadline cuts off noncooperative action, even after child cancellation',{timeout:15000},async t=>{const f=await fixture(t,{block:'noncooperative'});const result=await f.command('state');assert.ok(['afos/main-ipc-cutoff','afos/main-ipc-outcome-unknown'].includes(result.result.code));await new Promise(resolve=>setTimeout(resolve,100));assert.ok(f.stats.cutoffs>=1);assert.equal(f.stats.cancelled,1);assert.equal((await f.command('state')).result.code,'afos/main-ipc-cutoff');});
 test('Main bytes use fixed 64KiB pull frames and preserve original byte data',{timeout:5000},async t=>{const f=await fixture(t,{modelChunkBytes:150000});const result=await f.command('model');assert.deepEqual(result.result.sizes,[65536,65536,18928]);assert.equal(result.result.code,undefined);});
 test('Main oversized model body is refused with no raw source error or returned bytes',{timeout:5000},async t=>{const f=await fixture(t,{modelChunkBytes:4*1048576+1});const result=await f.command('model');assert.deepEqual(result.result.sizes,[]);assert.equal(result.result.code,'afos/main-ipc-refused');});

@@ -31,3 +31,12 @@ PostgreSQL/MySQL 行锁行为，没有打开生产数据库。
 `sqlite3@5.1.7`，执行六阶段安装/构建/测试并留存日志、锁和输入摘要。13 项
 AFOS-SQL 检查为 AT-18/20/22/33/38/39/47 提供子证据，不提升正式验收。
 产品 manifest/lock 不变。回滚仅撤下四个可选测试文件，不删除业务数据。
+
+可选 `src/server/__tests__/main-ipc-flow.integration.mjs` 使用两个真实 Node 进程，
+通过 Main 拥有的私有 IPC 执行原版已发布 Core/Loader/Agent/Session。66 秒流只为
+一个 Run、一个 Agent 的 committed publication 续期，受新鲜权限与服务器 Run 的
+绝对期限约束。release 和旧 renew 竞争由 provider 的真实 fork 套件覆盖。身份、
+ACL 仓储和模型回复为受控夹具；这些检查不认证原生 Client/Conversation、目标桌面、
+真实企业凭据或付费模型。本 publication 生命周期范围保持原验收台账
+2 PASS / 12 BLOCKED / 46 NOT_RUN，G3 未通过。回滚仅不纳入或撤销可选源码补丁，
+保留 Session、Recovery 草稿、凭据及服务器回执。

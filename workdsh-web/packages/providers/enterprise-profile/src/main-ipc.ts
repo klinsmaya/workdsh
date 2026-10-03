@@ -22,7 +22,7 @@ const METHODS = {
   'caller.admit': ['request'], 'caller.assert': ['leaseId'], 'caller.release': ['leaseId'],
   'authority.current': [], 'state.refresh': [], 'materials.list': [],
   'material.read': ['ref'], 'run.authorize': ['refs','operationId'], 'run.release': ['runId'],
-  'publication.prepare': ['runId','sessionId'], 'publication.ack': ['ticket'], 'publication.release': ['ticket'],
+  'publication.prepare': ['runId','sessionId'], 'publication.ack': ['ticket'], 'publication.renew': ['ticket'], 'publication.release': ['ticket'],
   'session.run': ['sessionId'], 'session.read': ['sessionId'], 'snapshot.read': ['sessionId','ref'],
   'draft.prepare': ['sessionId','content','refs'], 'draft.edit': ['draftId','content'],
   'session.project': ['sessionId','event'], 'session.cancel': ['sessionId','stopped'],
@@ -81,7 +81,7 @@ export async function attachMainBusinessIpc(endpoint:MainIpcEndpoint,business:Ma
   if(!(business.hostSignal instanceof AbortSignal)||!isAbsolute(bootstrap.root))denied();
   const model=policy(bootstrap.model),generation=randomUUID(),lifetime=new AbortController();
   const signal=AbortSignal.any([startSignal,business.hostSignal,lifetime.signal]); signal.throwIfAborted();
-  const leases=new Map<string,{lease:MainSessionBindingLease;sessionId:string;expiresAt:string;committed:boolean;timer:ReturnType<typeof setTimeout>}>();
+  const leases=new Map<string,{lease:MainSessionBindingLease;runId:string;sessionId:string;expiresAt:string;committed:boolean;timer:ReturnType<typeof setTimeout>}>();
   const streams=new Map<string,ParentStream>(),pending=new Map<number,AbortController>();
   let revision=0,lastCall=0,hello=false,closed=false,writeTail:Promise<unknown>=Promise.resolve();
   const assert=()=>{if(closed||signal.aborted)throw new MainIpcError('afos/main-ipc-cutoff');};
@@ -101,6 +101,12 @@ export async function attachMainBusinessIpc(endpoint:MainIpcEndpoint,business:Ma
   const perform=async(name:Method,args:Record<string,unknown>,caller:AbortSignal):Promise<unknown>=>{
     assert();caller.throwIfAborted();
     if(name==='caller.admit'||name==='caller.assert'||name==='caller.release')return callers.perform(name,args,caller);
+    // Revocation only: the owned generation/ticket has no granting side effect.
+    // Never let a fresh-authority or renewal await delay disposal of that lease.
+    if(name==='publication.release'){
+      const ticket=id(args.ticket),entry=leases.get(ticket);if(!entry)denied();
+      clearTimeout(entry.timer);leases.delete(ticket);entry.lease.dispose();return null;
+    }
     const grant=await business.currentAuthority(caller);assert();caller.throwIfAborted();
     if(Date.parse(grant.expiresAt)<=Date.now())denied();
     if(name==='authority.current')return authority(grant);
@@ -114,17 +120,17 @@ export async function attachMainBusinessIpc(endpoint:MainIpcEndpoint,business:Ma
       const lease=await business.prepareSessionBinding(runId,sessionId,caller);
       try{assert();caller.throwIfAborted();const ticket=randomUUID(),expiresAt=grant.expiresAt;
         const timer=setTimeout(()=>{const stale=leases.get(ticket);if(!stale)return;stale.lease.dispose();leases.delete(ticket);},Math.max(1,Math.min(Date.parse(expiresAt)-Date.now(),10000)));timer.unref();
-        leases.set(ticket,{lease,sessionId,expiresAt,committed:false,timer});return {ticket,sessionId,expiresAt};
+        leases.set(ticket,{lease,runId,sessionId,expiresAt,committed:false,timer});return {ticket,sessionId,expiresAt};
       }catch(error){lease.dispose();throw error;}
     }
-    if(name==='publication.ack'||name==='publication.release'){
+    if(name==='publication.ack'||name==='publication.renew'){
       const ticket=id(args.ticket),entry=leases.get(ticket);if(!entry)denied();
-      if(name==='publication.release'){clearTimeout(entry.timer);entry.lease.dispose();leases.delete(ticket);return null;}
-      if(entry.committed||Date.parse(entry.expiresAt)<=Date.now())denied();entry.lease.commit();entry.committed=true;
+      if(Date.parse(entry.expiresAt)<=Date.now() || (name==='publication.ack' ? entry.committed : !entry.committed))denied();
+      if(name==='publication.ack'){entry.lease.commit();entry.committed=true;}
       try{
         const owned=await business.sessionRun(entry.sessionId,caller);assert();caller.throwIfAborted();
-        if(leases.get(ticket)!==entry||Date.parse(entry.expiresAt)<=Date.now())denied();
-        const expiresAt=new Date(Math.min(Date.parse(owned.expiresAt),Date.now()+60000)).toISOString();
+        if(leases.get(ticket)!==entry||owned.runId!==entry.runId||owned.projectId!==grant.project.id||Date.parse(entry.expiresAt)<=Date.now())denied();
+        const expiresAt=new Date(Math.min(Date.parse(grant.expiresAt),Date.parse(owned.expiresAt),Date.now()+60000)).toISOString();
         if(Date.parse(expiresAt)<=Date.now())denied();clearTimeout(entry.timer);entry.expiresAt=expiresAt;
         entry.timer=setTimeout(()=>{void close();},Date.parse(expiresAt)-Date.now());entry.timer.unref();
         return {sessionId:entry.sessionId,expiresAt};
@@ -182,9 +188,17 @@ export async function attachMainBusinessIpc(endpoint:MainIpcEndpoint,business:Ma
       const callId=integer(request.callId),name=method(request.method),args=record(request.args,METHODS[name]);validateArgs(name,args);
       if(callId<=lastCall||pending.size>=IPC_MAX_PENDING)denied();lastCall=callId;
       const controller=new AbortController(),combined=AbortSignal.any([signal,controller.signal]);pending.set(callId,controller);
-      const deadline=setTimeout(()=>{controller.abort();void close();},10000);deadline.unref();
+      const renewalTicket=name==='publication.renew'?id(args.ticket):undefined;
+      const renewalLease=renewalTicket?leases.get(renewalTicket):undefined;
+      const deadline=setTimeout(()=>{
+        controller.abort();
+        // A disposed exact lease cannot block new work or close another publication.
+        // Active and unrelated noncooperative calls retain the hard channel cutoff.
+        if(renewalTicket&&renewalLease&&leases.get(renewalTicket)!==renewalLease){pending.delete(callId);return;}
+        void close();
+      },10000);deadline.unref();
       try{
-        const writes=['run.authorize','run.release','publication.prepare','publication.ack','publication.release','draft.prepare','draft.edit','session.project','session.cancel','draft.archive','model.open'];
+        const writes=['run.authorize','run.release','publication.prepare','publication.ack','draft.prepare','draft.edit','session.project','session.cancel','draft.archive','model.open'];
         const work=()=>perform(name,args,combined);
         let value:unknown;
         if(writes.includes(name)){const operation=writeTail.then(work);writeTail=operation.catch(()=>undefined);value=await operation;}else value=await work();
@@ -209,6 +223,7 @@ export async function connectMainBusinessIpc(endpoint:MainIpcEndpoint,startSigna
   const lifetime=new AbortController(),signal=AbortSignal.any([startSignal,lifetime.signal]),epoch=Object.freeze({});
   let generation:string|undefined,current:MainSnapshot|undefined,sequence=0,closed=false;
   const pending=new Map<number,Pending>(),cancelled=new Set<number>();
+  const publicationCleanup=new Set<()=>void>();
   let resolveWelcome!:(value:{bootstrap:MainIpcBootstrap;authority:GatewayAuthoritySnapshot})=>void,rejectWelcome!:(error:MainIpcError)=>void;
   const welcome={promise:new Promise<{bootstrap:MainIpcBootstrap;authority:GatewayAuthoritySnapshot}>((resolve,reject)=>{resolveWelcome=resolve;rejectWelcome=reject;}),resolve:(value:{bootstrap:MainIpcBootstrap;authority:GatewayAuthoritySnapshot})=>resolveWelcome(value),reject:(error:MainIpcError)=>rejectWelcome(error)};
   const assert=()=>{if(closed||signal.aborted||!generation)throw new MainIpcError('afos/main-ipc-cutoff');};
@@ -217,7 +232,9 @@ export async function connectMainBusinessIpc(endpoint:MainIpcEndpoint,startSigna
   const close=()=>{
     if(closed)return;closed=true;lifetime.abort(new MainIpcError('afos/main-ipc-cutoff'));releaseMessages();releaseDisconnect();
     signal.removeEventListener('abort',close);for(const entry of pending.values()){entry.release();entry.reject(new MainIpcError('afos/main-ipc-cutoff'));}pending.clear();
-    callers?.close();current=undefined;welcome.reject(new MainIpcError('afos/main-ipc-cutoff'));
+    callers?.close();
+    for(const dispose of publicationCleanup)dispose();publicationCleanup.clear();
+    current=undefined;welcome.reject(new MainIpcError('afos/main-ipc-cutoff'));
   };
   const accept=(input:unknown)=>{
     try{
@@ -276,11 +293,29 @@ export async function connectMainBusinessIpc(endpoint:MainIpcEndpoint,startSigna
       const ticket=id(prepared.ticket),owned=businessId(prepared.sessionId);let expiresAt=Date.parse(stamp(prepared.expiresAt)),status:'prepared'|'consumed'|'ready'|'disposed'='prepared';
       if(owned!==sessionId||expiresAt<=Date.now())denied();
       const active=()=>{assert();if(status!=='ready'||expiresAt<=Date.now())denied();};
+      let renewalTimer:ReturnType<typeof setTimeout>|undefined;
+      const dispose=()=>{status='disposed';clearTimeout(renewalTimer);publicationCleanup.delete(dispose);};
+      publicationCleanup.add(dispose);
+      const scheduleRenewal=()=>{
+        active();clearTimeout(renewalTimer);
+        renewalTimer=setTimeout(()=>{
+          if(status!=='ready'||closed)return;
+          void (async()=>{
+            active();const renewed=record(await call('publication.renew',{ticket},signal),['sessionId','expiresAt']);
+            if(status!=='ready'||closed)return;
+            active();if(renewed.sessionId!==sessionId)denied();
+            const freshExpiry=Date.parse(stamp(renewed.expiresAt));
+            if(freshExpiry<=Date.now()||freshExpiry>Date.now()+60000)denied();
+            expiresAt=freshExpiry;scheduleRenewal();
+          })().catch(()=>{if(status==='ready'&&!closed)close();});
+        },Math.max(1,Math.min(30000,Math.floor((expiresAt-Date.now())/2))));
+        renewalTimer.unref();
+      };
       return Object.freeze<MainSessionBindingLease>({signal,commit:()=>{assert();caller.throwIfAborted();if(status!=='prepared'||expiresAt<=Date.now())denied();status='consumed';},
-        dispose:()=>{status='disposed';},assertReady:active,
+        dispose,assertReady:active,
         acknowledge:async ackSignal=>{if(status!=='consumed')denied();const ack=record(await call('publication.ack',{ticket},ackSignal),['sessionId','expiresAt']);
-          assert();if(status!=='consumed'||ack.sessionId!==sessionId)denied();expiresAt=Date.parse(stamp(ack.expiresAt));status='ready';active();},
-        release:async releaseSignal=>{status='disposed';await call('publication.release',{ticket},releaseSignal);}});
+          assert();if(status!=='consumed'||ack.sessionId!==sessionId)denied();expiresAt=Date.parse(stamp(ack.expiresAt));status='ready';active();scheduleRenewal();},
+        release:async releaseSignal=>{dispose();await call('publication.release',{ticket},releaseSignal);}});
     },
     sessionRun:async(sessionId,caller)=>run(await call('session.run',{sessionId},caller)),
     ownedSessionRead:async(sessionId,caller)=>{const v=record(await call('session.read',{sessionId},caller),['sessionId','expiresAt']);

@@ -16,6 +16,8 @@ for await(const line of createInterface({input:process.stdin})){
   if(cmd.op==='idle'){const agent=ctx.agents.get(cmd.sessionId);await agent.whenIdle();await new Promise(resolve=>setTimeout(resolve,20));result={events:agent.session.snapshotEvents(),wakes,toolCalls:events};}
   if(cmd.op==='late-cancel'){await ctx.afosMainBusiness.asyncAccess.markCancellation(cmd.sessionId,false,new AbortController().signal);result={execution:ctx.afosMainBusiness.drafts().find(v=>v.sessionId===cmd.sessionId).localExecution};}
   if(cmd.op==='stats')result={wakes,toolCalls:events,agents:ctx.agents.list().length};
+  // Captured observer counts remain readable after cutoff disposes Core services.
+  if(cmd.op==='observations')result={wakes,toolCalls:events};
   if(cmd.op==='exit'){await host.close();process.disconnect();process.exit(0);}
   output({op:cmd.op,result});
  }catch(error){output({op:cmd.op,error:error.message});}
