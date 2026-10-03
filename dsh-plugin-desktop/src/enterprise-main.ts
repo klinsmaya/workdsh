@@ -1,6 +1,6 @@
 import { accountNamespace, DesktopAuth, RefreshTokenVault, type EnterpriseAuthConfig } from './desktop-auth.ts'
 import { EnterpriseBroker, EnterpriseBrokerError, type CurrentAuthoritySnapshot, type EnterpriseProject, type RunAuthorization, type SourceRef } from './enterprise-broker.ts'
-import { EnterpriseRecoveryStore, type DraftRecord, type OfficialSessionSummaryEvent, type RecoveryLayout, type RecoveryStoreOptions, type RecoveryTransport } from './enterprise-recovery.ts'
+import { EnterpriseRecoveryStore, isOwnedSessionId, type DraftRecord, type OfficialSessionSummaryEvent, type RecoveryLayout, type RecoveryStoreOptions, type RecoveryTransport } from './enterprise-recovery.ts'
 
 /** Private trusted Host callback. Only official Agent setup receives a publication lease. */
 export interface EnterpriseSessionBindingLease { commit(): void; dispose(): void }
@@ -88,7 +88,12 @@ export class EnterpriseMainSession {
   private readonly snapshots = new Map<string, { readonly text: string } & SourceRef>()
   private readonly sessionRuns = new Map<string, string>()
   private readonly sessionDrafts = new Map<string, string>()
+  private readonly historicalSessionDrafts = new Map<string, string>()
   private readonly sessionLeases = new Map<string, symbol>()
+  private restoreHistoricalSessionDrafts(projectId: string): void {
+    this.historicalSessionDrafts.clear()
+    for (const owned of this.recovery!.ownedSessionDrafts(projectId)) this.historicalSessionDrafts.set(owned.sessionId, owned.draftId)
+  }
   constructor(
     private readonly config: ManagedDesktopConfig,
     private readonly base: string,
@@ -130,6 +135,7 @@ export class EnterpriseMainSession {
     this.snapshots.clear()
     this.sessionRuns.clear()
     this.sessionDrafts.clear()
+    this.historicalSessionDrafts.clear()
     this.sessionLeases.clear()
   }
   private current(generation: number): void { if (generation !== this.generation) fail('account-changed') }
@@ -205,6 +211,7 @@ export class EnterpriseMainSession {
       this.current(generation)
       this.currentLoginVaults.add(this.namespace)
       this.recovery = EnterpriseRecoveryStore.open(this.base, authority.binding, this.recoveryTransport(), this.recoveryOptions)
+      this.restoreHistoricalSessionDrafts(project.id)
       await this.auth.persistRefresh(this.vault, this.namespace)
       this.current(generation)
       this.authoritySyncedAt = new Date().toISOString()
@@ -237,6 +244,7 @@ export class EnterpriseMainSession {
         this.namespace = namespace
         this.currentLoginVaults.add(namespace)
         this.recovery = EnterpriseRecoveryStore.open(this.base, binding, this.recoveryTransport(), this.recoveryOptions)
+        this.restoreHistoricalSessionDrafts(project.id)
         await this.auth.persistRefresh(this.vault, namespace)
         this.current(generation)
         this.authoritySyncedAt = new Date().toISOString()
@@ -410,6 +418,8 @@ export class EnterpriseMainSession {
       await this.broker.restoreRun(run, this.enterpriseSignal(signal)); activeEnterprise()
       return run
     }
+    // Even ambiguous/cross-project v1 history must never be rebound to a new execution.
+    const retainedSession = (sessionId: string) => this.recovery!.list().some(draft => draft.sessionId === sessionId)
     return Object.freeze({
       hostSignal: readSignal,
       currentAuthority: async (signal: AbortSignal) => { activeEnterprise(); const value = await this.currentAuthority(this.enterpriseSignal(signal)); activeEnterprise(); return value },
@@ -426,7 +436,7 @@ export class EnterpriseMainSession {
       },
       prepareSessionBinding: async (runId: string, sessionId: string, signal: AbortSignal): Promise<EnterpriseSessionBindingLease> => {
         activeEnterprise()
-        if (!bounded(sessionId) || this.sessionRuns.has(sessionId) || this.sessionLeases.has(runId)) fail('session-run-conflict')
+        if (!isOwnedSessionId(sessionId) || retainedSession(sessionId) || this.sessionRuns.has(sessionId) || this.sessionLeases.has(runId)) fail('session-run-conflict')
         const leaseId = Symbol('afos-session-publication')
         this.sessionLeases.set(runId, leaseId)
         let authority: CurrentAuthoritySnapshot
@@ -440,7 +450,7 @@ export class EnterpriseMainSession {
         return Object.freeze({
           commit: () => {
             activeEnterprise(); signal.throwIfAborted()
-            if (disposed || committed || this.sessionLeases.get(runId) !== leaseId || this.sessionRuns.size || this.sessionRuns.has(sessionId)
+            if (disposed || committed || this.sessionLeases.get(runId) !== leaseId || this.sessionRuns.size || this.sessionRuns.has(sessionId) || retainedSession(sessionId)
               || this.runs.get(runId) !== run || Date.parse(authority.expiresAt) <= Date.now() || Date.parse(run.expiresAt) <= Date.now()) fail('session-publication-denied')
             this.sessionRuns.set(sessionId, runId); committed = true
           },
@@ -457,12 +467,12 @@ export class EnterpriseMainSession {
       sessionRun,
       ownedSessionRead: async (sessionId: string, signal: AbortSignal) => {
         activeEnterprise()
-        if (!bounded(sessionId)) fail('draft-session-not-owned')
+        if (!isOwnedSessionId(sessionId)) fail('draft-session-not-owned')
         const combined = AbortSignal.any([signal, readSignal])
         combined.throwIfAborted()
         const authority = await this.currentAuthority(combined)
         activeEnterprise(); combined.throwIfAborted()
-        const draftId = this.sessionDrafts.get(sessionId)
+        const draftId = this.sessionDrafts.get(sessionId) ?? this.historicalSessionDrafts.get(sessionId)
         if (!draftId) fail('draft-session-not-owned')
         const draft = ownDraft(draftId)
         if (draft.sessionId !== sessionId || !sameBinding(draft.run.binding, authority.binding)

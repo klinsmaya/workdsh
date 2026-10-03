@@ -79,6 +79,10 @@ function id(value: unknown, max = 256): string {
   if (typeof value !== 'string' || !value.length || value.length > max || /[\u0000-\u001f\u007f]/u.test(value)) fail('invalid-id')
   return value
 }
+/** Private ownership reference, not a path or an arbitrary retained Session query. */
+export function isOwnedSessionId(value: unknown): value is string {
+  return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(value)
+}
 function integer(value: unknown, minimum = 0): number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < minimum) fail('invalid-number')
   return value
@@ -316,6 +320,14 @@ export class EnterpriseRecoveryStore {
   }
   /** Offline view only. A recorded receipt is cached evidence with lastSyncAt, never a fresh authorization. */
   list(): readonly DraftRecord[] { this.active(); return this.drafts }
+  /** Derive read ownership only; preserve v1 records and exclude ambiguity across the whole account namespace. */
+  ownedSessionDrafts(projectId: string): readonly { readonly sessionId: string; readonly draftId: string }[] {
+    this.active(); id(projectId, 128)
+    const counts = new Map<string, number>()
+    for (const draft of this.drafts) counts.set(draft.sessionId, (counts.get(draft.sessionId) ?? 0) + 1)
+    return Object.freeze(this.drafts.filter(draft => draft.run.projectId === projectId && counts.get(draft.sessionId) === 1 && isOwnedSessionId(draft.sessionId))
+      .map(draft => Object.freeze({ sessionId: draft.sessionId, draftId: draft.draftId })))
+  }
   async createDraft(input: {
     readonly run: RunAuthorization; readonly sessionId: string; readonly content: string; readonly inputSnapshots: readonly InputSnapshot[];
     readonly clientRequestId: string; readonly generatedAt: string; readonly predecessorDraftId?: string
