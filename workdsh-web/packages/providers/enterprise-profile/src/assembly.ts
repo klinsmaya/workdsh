@@ -6,7 +6,8 @@ import { randomUUID } from 'node:crypto';
 import { isAbsolute, join } from 'node:path';
 import { createRequire } from 'node:module';
 import { SnapshotIdentityAuthority, EnterpriseProfileError } from './snapshot-authority.js';
-import { fixedEnterpriseComposition, ENTERPRISE_HOST_PACKAGES } from './profile-policy.js';
+import { fixedEnterpriseCoreRows } from './core-rows.js';
+export { fixedEnterpriseCoreRows } from './core-rows.js';
 import type { MainBusinessCapabilities } from './main-capabilities.js';
 import type { ModelPolicy } from '@afos/model-adapter';
 import './authority-service.js';
@@ -51,28 +52,8 @@ export async function bootEnterpriseNativeWsCore(options: EnterpriseNativeWsAsse
   return bootCore(options, true, options.nativeCaller);
 }
 async function bootCore(options: EnterpriseAssemblyOptions, nativeReads: boolean, nativeCaller?: NativeCallerProof): Promise<Context> {
-  options.signal.throwIfAborted(); managedDirectory(options.root);
-  const storage = join(options.root, 'business-storage'), sessions = join(options.root, 'sessions');
-  managedDirectory(storage); managedDirectory(sessions);
+  const rows = fixedEnterpriseCoreRows(options);
   const require = createRequire(import.meta.url);
-  const config: Record<string, unknown> = {
-    '@deepseek-ai/dsh-storage-json': { root: storage }, '@deepseek-ai/dsh-storage-domain': { backend: 'json' },
-    '@deepseek-ai/dsh-tools': { mode: 'native' },
-    '@deepseek-ai/dsh-session-persistence-jsonl': { root: sessions, compression: 'none' },
-    '@deepseek-ai/dsh-agent-loop': { agents: [], maxParallelToolCalls: 1 },
-    '@deepseek-ai/dsh-agent-preset-registry': { default: 'afos-fixed' },
-    '@deepseek-ai/dsh-agent-preset': { id: 'afos-fixed', name: 'AFOS material draft', plugins: [
-      { name: require.resolve('@deepseek-ai/dsh-persona'), config: { prefix: 'You prepare evidence-based internal drafts for human review.', complete: false, includeRuntimeContext: false } },
-    ] },
-    '@deepseek-ai/dsh-host-webserver': { host: '127.0.0.1', port: 0 },
-    '@deepseek-ai/dsh-credentials-local': { path: join(options.root, 'browser-auth.yaml'), dshHome: options.root, watch: false },
-    '@deepseek-ai/dsh-client-connection': { maxRequestBodyBytes: 1048576, trustedHosts: [] },
-    'workdsh-provider-identity-nocobase': { binding: options.binding, freshnessMs: 1000 },
-    'workdsh-plugin-access': { enterprise: true },
-    'workdsh-provider-enterprise-profile/runtime': { model: options.model },
-    'workdsh-provider-enterprise-profile': fixedEnterpriseComposition(),
-  };
-  const rows = ENTERPRISE_HOST_PACKAGES.map((name, index) => ({ id: `afos-${index}`, name: require.resolve(name), ...(config[name] ? { config: config[name] } : {}) }));
   let nativeController: SessionController | undefined, nativeReader: Context | undefined, nativeMux: Context | undefined;
   let rootOwner: Context | undefined;
   const nativeWorkspace = join(options.root, 'native-workspace');

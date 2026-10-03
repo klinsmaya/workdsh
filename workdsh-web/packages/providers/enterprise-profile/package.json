@@ -61,6 +61,22 @@
     "./ipc-assembly": {
       "types": "./dist/ipc-assembly.d.ts",
       "default": "./dist/ipc-assembly.js"
+    },
+    "./cli-bootstrap": {
+      "types": "./dist/cli-bootstrap.d.ts",
+      "default": "./dist/cli-bootstrap.js"
+    },
+    "./cli-ready": {
+      "types": "./dist/cli-ready.d.ts",
+      "default": "./dist/cli-ready.js"
+    },
+    "./cli-core": {
+      "types": "./dist/cli-core.d.ts",
+      "default": "./dist/cli-core.js"
+    },
+    "./cli-profile": {
+      "types": "./dist/cli-profile.d.ts",
+      "default": "./dist/cli-profile.js"
     }
   },
   "files": [
@@ -78,7 +94,8 @@
     "NATIVE_WS_CLIENT.i18n.yaml",
     "MAIN_IPC.md",
     "MAIN_IPC.zh-CN.md",
-    "MAIN_IPC.i18n.yaml"
+    "MAIN_IPC.i18n.yaml",
+    "ADR_CLI_PROVIDER.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",

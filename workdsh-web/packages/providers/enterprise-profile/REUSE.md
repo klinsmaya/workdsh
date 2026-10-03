@@ -1,5 +1,19 @@
 # Official reuse record
 
+- D07 original CLI provider (task /root/afos_crossprocess_inventory): public
+  rc.2 CLI/Profile/Loader, PromiseLike Cordis ctx.plugin and original Identity
+  service. A fixed isolated provider awaits finite Main IPC plus Identity init,
+  then publishes an explicit consumer ready gate. No second boot/root, arbitrary
+  patch/expression, Loader.create persistence, unsafe personal tree or credential
+  transport. Actual CLI tests are component-only; see ADR_CLI_PROVIDER.md and new
+  CLI evidence. Default carrier, CallerProof, offline GUI and target OS remain
+  unverified. Exact official public API/source inventory is frozen separately.
+  The optional Main-only EnterpriseCliHost resolves the official package.bin
+  `lib/bin.js` and public Profile/finiteIPC exports from the same trusted graph;
+  original public appReady.onReady supplies successful startup after Loader audit.
+  StorageDomain/AgentLoop rows explicitly carry their existing declared deps
+  into original nested scope fibers. No upstream guard or engine changes.
+
 - D07 private Main IPC: public app-boot `boot.prepare`, original synchronous
   Agent setup commit and ordinary Node child IPC. A fixed business proxy supplies
   Main-owned immutable snapshots and awaited write/publication ACK. Model bytes
