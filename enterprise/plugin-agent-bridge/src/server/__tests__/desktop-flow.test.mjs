@@ -4,6 +4,18 @@ import { test } from 'node:test';
 import { digest } from '../core.ts';
 import { fixture } from './desktop-fixture.mjs';
 
+test('AFOS-CHECK-F19 one issuance timestamp respects the actual Broker run duration cap',async()=>{
+  const originalNow=Date.now;let tick=0;
+  const f=await fixture({response:async request=>{if(request.action==='runs.authorizeLocal')Date.now=()=>originalNow()+tick++;}});
+  try{
+    await f.ready();await f.main.readRevision(f.ref);
+    const run=await f.main.authorize([f.ref],'millisecond-boundary');
+    const stored=f.tables.runs.get(run.runId);
+    assert.equal(stored.expiresAt-stored.issuedAt,30*60_000);
+    assert.equal(Date.parse(run.expiresAt)-Date.parse(run.issuedAt),30*60_000);
+  }finally{Date.now=originalNow;await f.cleanup();}
+});
+
 test('AFOS-CHECK-F01 Main composes PKCE/current authority/durable draft/query-first archive',async()=>{
   const f=await fixture();try{
     const authority=await f.ready();assert.equal(authority.binding.subject,'alice');assert.ok(f.stops()>=2);

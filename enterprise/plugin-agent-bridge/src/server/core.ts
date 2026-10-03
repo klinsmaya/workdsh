@@ -211,7 +211,8 @@ export class AgentBridge {
         await this.run(store, evidence, runId, 'read');
         return wireRun(previous);
       }
-      const run: Run = { id: runId, issuer:evidence.issuer, principalId: evidence.principalId, organizationId: project.organizationId, deviceId, projectId: project.id, releaseId: this.releaseId, policyRevision:this.policyRevision, allowedActions, inputs, issuedAt:Date.now(), expiresAt: Math.min(evidence.expiresAt, Date.now() + 30 * 60_000), attempt: 1, requestHash };
+      const issuedAt = Date.now();
+      const run: Run = { id: runId, issuer:evidence.issuer, principalId: evidence.principalId, organizationId: project.organizationId, deviceId, projectId: project.id, releaseId: this.releaseId, policyRevision:this.policyRevision, allowedActions, inputs, issuedAt, expiresAt: Math.min(evidence.expiresAt, issuedAt + 30 * 60_000), attempt: 1, requestHash };
       await store.insert('runs', run);
       return wireRun(run);
     }
