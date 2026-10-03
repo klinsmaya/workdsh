@@ -175,6 +175,8 @@ export class DesktopAuth {
     const callback = new Promise<string>((resolve, fail) => { settle = resolve; reject = fail })
     // Attach rejection handling before opening the browser or awaiting network work.
     callback.catch(() => undefined)
+    const browserCutoff = Promise.withResolvers<never>()
+    browserCutoff.promise.catch(() => undefined)
     let consumed = false
     const server = createServer((request, response) => {
       let url: URL
@@ -190,19 +192,28 @@ export class DesktopAuth {
       response.end(valid ? 'Sign-in received. Return to WorkDSH.' : 'Invalid sign-in callback.')
       if (valid) { consumed = true; settle(url.searchParams.get('code') ?? '') }
     })
-    const abort = () => reject(new DesktopAuthError('auth/login-cancelled'))
+    const abort = () => {
+      const error = new DesktopAuthError('auth/login-cancelled')
+      reject(error)
+      browserCutoff.reject(error)
+    }
     deadline.addEventListener('abort', abort, { once: true })
     try {
       deadline.throwIfAborted()
       await new Promise<void>((resolve, fail) => { server.once('error', fail); server.listen(0, '127.0.0.1', resolve) })
+      if (deadline.aborted) throw new DesktopAuthError('auth/login-cancelled')
       const address = server.address()
       if (!address || typeof address === 'string') throw new DesktopAuthError('auth/callback-unavailable')
       const redirectUri = `http://127.0.0.1:${address.port}${callbackPath}`
       const authorization = new URL(metadata.authorization_endpoint)
       authorization.search = new URLSearchParams({ response_type: 'code', client_id: this.config.clientId, redirect_uri: redirectUri, scope: this.config.scope, resource: this.config.resource, state, code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256' }).toString()
-      await this.openBrowser(authorization.href)
+      await Promise.race([this.openBrowser(authorization.href), browserCutoff.promise])
       const code = await callback
-      const body = await this.request(metadata.token_endpoint, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ grant_type: 'authorization_code', client_id: this.config.clientId, redirect_uri: redirectUri, code, code_verifier: verifier, resource: this.config.resource }) }, deadline)
+      const body = await Promise.race([
+        this.request(metadata.token_endpoint, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ grant_type: 'authorization_code', client_id: this.config.clientId, redirect_uri: redirectUri, code, code_verifier: verifier, resource: this.config.resource }) }, deadline),
+        browserCutoff.promise,
+      ])
+      if (deadline.aborted) throw new DesktopAuthError('auth/login-cancelled')
       this.install(body, generation)
     } finally {
       deadline.removeEventListener('abort', abort)
