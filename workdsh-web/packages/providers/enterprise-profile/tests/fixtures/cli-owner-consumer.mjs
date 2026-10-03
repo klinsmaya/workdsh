@@ -4,12 +4,14 @@ import { readFile, lstat } from 'node:fs/promises';
 import { relative, isAbsolute, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { runtimeBindingDomainSpec } from 'workdsh-plugin-access';
+import { SessionId } from '@deepseek-ai/dsh-session';
+import { ToolCallId } from '@deepseek-ai/dsh-llm/brand';
 
 // Opt-in test observer, installed only by the isolated original-CLI test profile.
 // Seed through original public persistence/domain APIs; never through a caller.
 export const name = 'afos-private-test-owner-consumer';
 export const inject = ['afosCliCoreReady', 'afosCliNativeReady', 'afosDraftRuntime', 'connection', 'webServer',
-  'workdshAccess', 'storageDomain', 'sessionPersistence', 'agents', 'sessions'];
+  'workdshAccess', 'storageDomain', 'sessionPersistence', 'agents', 'sessions', 'tools', 'afosEnterpriseIngress'];
 const sha = value => createHash('sha256').update(value).digest('hex');
 export function apply(ctx, config) {
   const publications = [];
@@ -42,6 +44,53 @@ export function apply(ctx, config) {
   };
   const commands = {
     stats,
+    unownedTool: async ({ ref }) => {
+      const baseline = stats(), id = SessionId('unowned-agent-' + randomUUID());
+      const domain = ctx.storageDomain.get(runtimeBindingDomainSpec.name); assert.ok(domain);
+      const owner = () => {
+        const value = ctx.workdshAccess.sessionOwner(id) ?? null;
+        assert.deepEqual(domain.table('sessions').get(id) ?? null, value); return value;
+      };
+      const directId = ToolCallId('direct-' + randomUUID()), ingressId = ToolCallId('ingress-' + randomUUID());
+      const observed = { preExecute: 0, execute: 0, results: 0, decision: null };
+      const releasePre = ctx.on('tools/pre-execute', async (exec, next) => {
+        if (exec.callId !== directId && exec.callId !== ingressId) return next();
+        observed.preExecute++; const decision = await next();
+        observed.decision = { kind: decision.kind, reason: decision.reason }; return decision;
+      }, { global: true, prepend: true });
+      const releaseExecute = ctx.on('tools/execute', async (exec, next) => {
+        if (exec.callId === directId || exec.callId === ingressId) observed.execute++; return next();
+      }, { global: true, prepend: true });
+      const releaseResult = ctx.on('tools/result', exec => { if (exec.callId === directId) observed.results++; }, { global: true });
+      let handle;
+      try {
+        handle = await ctx.agents.create({ sessionId: id,
+          agentOptions: { provider: 'afos-managed', model: 'fixed-model', maxTokens: 64 }, signal: AbortSignal.timeout(5000) });
+        const agent = handle.agent; assert.equal(ctx.agents.get(id), agent); assert.equal(agent.id, id);
+        assert.equal(owner(), null);
+        const definition = ctx.tools.get('afos_read_snapshot', agent); assert.ok(definition);
+        assert.equal(Object.isFrozen(definition), true);
+        const input = callId => ({ callId, name: 'afos_read_snapshot', agent, signal: AbortSignal.timeout(5000),
+          arguments: { materialId: ref.materialId, revisionId: ref.revisionId } });
+        let ingressCode;
+        try { await ctx.afosEnterpriseIngress.executeTool(input(ingressId)); assert.fail('unowned ingress was admitted'); }
+        catch (error) { ingressCode = error.code; assert.equal(ingressCode, 'afos/profile-session-unowned'); }
+        assert.equal(owner(), null); assert.equal(observed.preExecute, 0); assert.equal(observed.execute, 0);
+        const direct = await ctx.tools.execute(input(directId));
+        assert.equal(direct.isError, true); assert.equal(direct.error.message, 'AFOS Main publication was not acknowledged.');
+        assert.equal(Object.hasOwn(direct, 'value'), false);
+        assert.deepEqual(observed.decision, { kind: 'deny', reason: 'AFOS Main publication was not acknowledged.' });
+        assert.equal(observed.preExecute, 1); assert.equal(observed.execute, 0); assert.equal(observed.results, 1);
+        assert.equal(owner(), null); assert.equal(stats().personalAutoBindService, false);
+        return { id, realRegisteredAgent: true, originalFrozenTool: true, ingressCode,
+          direct: { isError: direct.isError, message: direct.error.message }, observed,
+          ownerBeforeAndAfter: null, beforeAgents: baseline.agents, beforeSessions: baseline.sessions };
+      } finally {
+        releasePre(); releaseExecute(); releaseResult(); await handle?.dispose();
+        assert.equal(ctx.agents.get(id), undefined); assert.equal(owner(), null);
+        assert.equal(ctx.agents.list().length, baseline.agents); assert.equal(ctx.sessions.list().length, baseline.sessions);
+      }
+    },
     persisted: ({ ids }) => persisted(ids),
     seed: async ({ sessionId }) => {
       const agent = ctx.agents.get(sessionId); assert.ok(agent);

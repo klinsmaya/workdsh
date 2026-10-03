@@ -26,7 +26,7 @@ const bounded = async (promise, label, ms = 5000) => {
 };
 
 async function composed(t) {
-  let child, channel, issuer, ready, profileRoot, generation = 0, models = 0, requestId = 0;
+  let child, channel, issuer, ready, profileRoot, generation = 0, models = 0, snapshotReads = 0, requestId = 0;
   const children = [], pending = new Map(), sockets = new Set(), mainReadDenials = [];
   const stop = async () => {
     issuer?.close(); issuer = undefined;
@@ -74,7 +74,9 @@ async function composed(t) {
       messages: listener => { current.on('message', listener); return () => current.off('message', listener); },
       disconnected: listener => { current.on('disconnect', listener); return () => current.off('disconnect', listener); } };
     // Observe the real Main rejection before its existing finite IPC error mapping.
-    const observedBusiness = { ...business, ownedSessionRead: async (id, s) => {
+    const observedBusiness = { ...business, readPinnedSnapshot: async (...args) => {
+      snapshotReads++; return business.readPinnedSnapshot(...args);
+    }, ownedSessionRead: async (id, s) => {
       try { return await business.ownedSessionRead(id, s); }
       catch (error) { mainReadDenials.push({ id, code: error.code }); throw error; }
     } };
@@ -121,7 +123,7 @@ async function composed(t) {
       const [raw] = await bounded(first, 'Original follow opening'); return JSON.parse(raw);
     } finally { ws.terminate(); sockets.delete(ws); }
   };
-  return { ...f, children, mainReadDenials, models: () => models, control, unary, http, follow,
+  return { ...f, children, mainReadDenials, models: () => models, snapshotReads: () => snapshotReads, control, unary, http, follow,
     restart: async () => { carrier = await start(); } };
 }
 
@@ -185,4 +187,24 @@ test('AT16 original CLI restart preserves owners and cold Native reads never ado
   console.log('AT16_ORIGINAL_CLI ' + JSON.stringify({ children: f.children.map(({ pid, ppid }) => ({ pid, ppid })),
     warmRefused, coldRefused, sameProfile: true, ownersAndJsonlBytesUnchanged: true, coldAgents: 0, coldSessions: 0,
     coldPublications: 0, coldModelCalls: 0, originalNativeColdSnapshot: true, fixtureIdentityModelAndFrame: true, formalAT16: 'NOT_RUN' }));
+});
+
+test('AT16 original CLI real unowned Agent is denied by ingress and original tools pipeline', { timeout: 20000 }, async t => {
+  const f = await composed(t), before = await f.control('stats');
+  assert.equal(before.agents, 0); assert.equal(before.sessions, 0); assert.equal(before.personalAutoBindService, false);
+  assert.equal(fixedEnterpriseComposition().autoBindPersonalSessions, false);
+  const result = await f.control('unownedTool', { ref: f.ref });
+  assert.equal(result.realRegisteredAgent, true); assert.equal(result.originalFrozenTool, true);
+  assert.equal(result.ingressCode, 'afos/profile-session-unowned');
+  assert.equal(result.direct.isError, true); assert.equal(result.observed.preExecute, 1);
+  assert.equal(result.observed.execute, 0); assert.equal(result.observed.results, 1); assert.equal(result.ownerBeforeAndAfter, null);
+  const after = await f.control('stats');
+  assert.equal(after.agents, 0); assert.equal(after.sessions, 0); assert.equal(after.personalAutoBindService, false);
+  assert.equal(after.publications.length, 1); assert.equal(after.publications[0].id, result.id); assert.equal(after.publications[0].owner, null);
+  assert.equal(f.models(), 0); assert.equal(f.snapshotReads(), 0);
+  for (const table of ['runs', 'uploads', 'receipts', 'artifacts', 'commitRequests']) assert.equal(f.tables[table].size, 0);
+  console.log('AT16_UNOWNED_TOOL ' + JSON.stringify({ pid: f.children[0].pid, ppid: f.children[0].ppid,
+    originalAgentAndTool: true, ingressCode: result.ingressCode, originalPreExecuteDenied: true,
+    originalExecuteStage: 0, models: 0, mainSnapshotReads: 0, businessWrites: 0, ownerUnbound: true,
+    agentDisposed: true, fixtureIdentityAndFrame: true, formalAT16: 'NOT_RUN' }));
 });
