@@ -16,7 +16,8 @@ export function archiveLabel(draft: EnterpriseDraftView): string {
 }
 export interface PanelInjected {
   readonly model: DraftPanelModel;
-  readonly openSession: (sessionId: string, signal?: AbortSignal) => Promise<void>;
+  readonly openSession?: (sessionId: string, signal?: AbortSignal) => Promise<void>;
+  readonly localOnly?: boolean;
   readonly toggleNavigation: () => void;
 }
 export type DraftPanelProps = PropsRuntime<'main'> & InjectFace<PanelInjected>;
@@ -33,8 +34,9 @@ export function DraftDetails({ draft }: { readonly draft: EnterpriseDraftView })
     {isArchived(draft) && <><dt>服务器回执</dt><dd>{draft.receipt!.receiptId}</dd><dt>成果 / 版本</dt><dd>{draft.receipt!.artifactId} / {draft.receipt!.revisionId}</dd><dt>归档时间</dt><dd>{draft.receipt!.committedAt}</dd></>}
   </dl><h3>本次实际输入版本</h3><SourceList sources={draft.sources} /></>;
 }
-function Editor({ draft, model, busy, current, openSession, onDirty }: {
+function Editor({ draft, model, busy, current, localOnly, openSession, onDirty }: {
   readonly draft: EnterpriseDraftView; readonly model: DraftPanelModel; readonly busy: boolean; readonly current: boolean;
+  readonly localOnly: boolean;
   readonly openSession: PanelInjected['openSession']; readonly onDirty: (dirty: boolean) => void;
 }): React.ReactElement {
   const [content, setContent] = React.useState(draft.content);
@@ -47,30 +49,30 @@ function Editor({ draft, model, busy, current, openSession, onDirty }: {
   const reload = () => { setContent(draft.content); setBaseContent(draft.content); setBaseHash(draft.sha256); };
   const save = async () => { const saved = await model.edit(draft.draftId, content); if (saved) { setContent(saved.content); setBaseContent(saved.content); setBaseHash(saved.sha256); } };
   return <section className="card" aria-label="草稿预览与编辑">
-    <div className="bar"><h2>草稿 · 待人工核对</h2><Button variant="outline" size="sm" disabled={busy || dirty || !current} onClick={() => { void openSession(draft.sessionId); }}>打开原生会话</Button></div>
+    <div className="bar"><h2>草稿 · 待人工核对</h2>{!localOnly && openSession && <Button variant="outline" size="sm" disabled={busy || dirty || !current} onClick={() => { void openSession(draft.sessionId); }}>打开原生会话</Button>}</div>
     <p className="muted">AI 建议不能作为企业正式决定。本页支持纯文本预览和编辑。</p>
     <DraftDetails draft={draft} />
     <label className="field" htmlFor="afos-draft-editor">本地草稿正文</label>
     <Textarea id="afos-draft-editor" className="editor" value={content} maxLength={MAX_TEXT_BYTES} readOnly={!canEdit(draft)} disabled={busy} onChange={event => setContent(event.currentTarget.value)} />
-    {changed && <p role="alert">服务器工作副本已变化。保留了未保存编辑；请核对后重新载入最新版本。</p>}
-    <p className="small">{dirty ? '有未保存编辑；请先保存或放弃编辑，再新建任务或打开会话' : isArchived(draft) ? '已归档版本只读' : '当前正文已保存在本地工作副本'} · 草稿纯文本上限 {MAX_TEXT_BYTES / 1024} KiB（UTF-8）</p>
+    {changed && <p role="alert">{localOnly ? '本地' : '服务器'}工作副本已变化。保留了未保存编辑；请核对后重新载入最新版本。</p>}
+    <p className="small">{dirty ? localOnly ? '有未保存编辑；请先保存或放弃编辑，再切换草稿' : '有未保存编辑；请先保存或放弃编辑，再新建任务或打开会话' : isArchived(draft) ? '已归档版本只读' : '当前正文已保存在本地工作副本'} · 草稿纯文本上限 {MAX_TEXT_BYTES / 1024} KiB（UTF-8）</p>
     <div className="actions">
       <Button onClick={() => void save()} disabled={busy || !canEdit(draft) || !dirty || changed}>保存本地编辑</Button>
       <Button variant="outline" onClick={reload} disabled={busy || !dirty}>放弃编辑并载入当前版本</Button>
-      <Button variant="outline" onClick={() => void model.cancel(draft.draftId)} disabled={busy || !isActive(draft) || draft.execution === 'cancel_requested'}>请求取消</Button>
-      <Button onClick={() => setConfirmHash(draft.sha256)} disabled={busy || !current || dirty || isActive(draft) || isArchived(draft) || !draft.content.trim()}>{draft.archive === 'needs-reconciliation' ? '核对归档回执' : '确认后归档'}</Button>
+      {!localOnly && <><Button variant="outline" onClick={() => void model.cancel(draft.draftId)} disabled={busy || !isActive(draft) || draft.execution === 'cancel_requested'}>请求取消</Button>
+      <Button onClick={() => setConfirmHash(draft.sha256)} disabled={busy || !current || dirty || isActive(draft) || isArchived(draft) || !draft.content.trim()}>{draft.archive === 'needs-reconciliation' ? '核对归档回执' : '确认后归档'}</Button></>}
     </div>
     <h3 className="preview-label">纯文本预览</h3><pre>{content || '尚无生成正文。'}</pre>
-    <Modal open={confirmHash !== undefined} label="确认归档当前保存版本" className="afos-drafts-dialog" onClose={() => { if (!busy) setConfirmHash(undefined); }}>
+    {!localOnly && <Modal open={confirmHash !== undefined} label="确认归档当前保存版本" className="afos-drafts-dialog" onClose={() => { if (!busy) setConfirmHash(undefined); }}>
       <h2>确认归档当前保存版本</h2>
       <p>将此已保存草稿作为项目内不可变成果版本提交。服务器会重新校验当前权限；只有取得真实回执才显示已归档。</p>
       <p>内容 SHA-256：<code>{confirmHash}</code></p>
       {draft.archive === 'needs-reconciliation' && <p>现有归档结果未确认，服务端会先核对原操作回执。不会由页面自动创建另一个版本。</p>}
       <div className="actions"><Button variant="outline" disabled={busy} onClick={() => setConfirmHash(undefined)}>返回核对</Button><Button disabled={busy || dirty || confirmHash !== draft.sha256 || !current} onClick={() => { const hash = confirmHash; setConfirmHash(undefined); if (hash) void model.archiveConfirmed(draft.draftId, hash); }}>我确认提交此版本</Button></div>
-    </Modal>
+    </Modal>}
   </section>;
 }
-export function EnterpriseDraftPanel({ model, openSession, toggleNavigation }: DraftPanelProps): React.ReactElement {
+export function EnterpriseDraftPanel({ model, openSession, toggleNavigation, localOnly = false }: DraftPanelProps): React.ReactElement {
   const view = React.useSyncExternalStore(model.subscribe, model.getSnapshot, model.getSnapshot);
   const [goal, setGoal] = React.useState('');
   const [dirty, setDirty] = React.useState(false);
@@ -78,41 +80,42 @@ export function EnterpriseDraftPanel({ model, openSession, toggleNavigation }: D
   const [opening, setOpening] = React.useState(false);
   const [navigationError, setNavigationError] = React.useState<string>();
   const navigationRequest = React.useRef<AbortController | undefined>(undefined);
-  const state = view.state, busy = !!view.pending || opening, current = state?.authority === 'current';
+  const scopeRevision = model.getScopeRevision();
+  const state = view.state, busy = !!view.pending || opening, current = !localOnly && state?.authority === 'current';
   const draft = state?.drafts.find(row => row.draftId === view.selectedDraftId);
   const setEditorDirty = React.useCallback((value: boolean) => setDirty(value), []);
   React.useEffect(() => { void model.refresh(); const timer = setInterval(() => void model.refresh(), 3000); return () => clearInterval(timer); }, [model]);
-  React.useEffect(() => { setGoal(''); setDirty(false); setSelectConfirm(undefined); }, [state?.project.id]);
+  React.useEffect(() => { setGoal(''); setDirty(false); setSelectConfirm(undefined); }, [state?.project.id, scopeRevision]);
   React.useEffect(() => () => { navigationRequest.current?.abort(new NativeNavigationError('cancelled')); navigationRequest.current = undefined; }, []);
   const navigate = async (sessionId: string) => {
     navigationRequest.current?.abort(new NativeNavigationError('cancelled'));
     const request = new AbortController(); navigationRequest.current = request;
     setOpening(true); setNavigationError(undefined);
-    try { await openSession(sessionId, request.signal); }
+    try { if (!openSession || localOnly) throw new NativeNavigationError('unavailable'); await openSession(sessionId, request.signal); }
     catch (error) {
       if (navigationRequest.current === request && !request.signal.aborted) setNavigationError(error instanceof NativeNavigationError && error.code === 'changed' ? '会话或授权已变化，请刷新后重试。' : '原生会话暂未就绪，请稍后重试。');
     } finally { if (navigationRequest.current === request) { navigationRequest.current = undefined; setOpening(false); } }
   };
   const chooseDraft = (id: string) => { if (dirty && id !== draft?.draftId) setSelectConfirm(id); else model.selectDraft(id); };
-  return <main className="afos-drafts" aria-label="企业草稿">
+  return <main className="afos-drafts" aria-label={localOnly ? '本地草稿' : '企业草稿'}>
     <style>{controlsCss}{modalCss}{draftsCss}</style>
-    <header className="bar"><div className="actions"><Button variant="ghost" size="sm" onClick={toggleNavigation} aria-label="切换导航"><Icon name="panel" /></Button><div><h1>企业草稿</h1><p className="muted">{state ? `${state.project.name} · ${current ? '当前企业授权' : '企业授权离线'}` : '等待企业业务状态'}</p></div></div><Button variant="outline" disabled={busy} onClick={() => void model.refresh()}>刷新资料与状态</Button></header>
+    <header className="bar"><div className="actions"><Button variant="ghost" size="sm" onClick={toggleNavigation} aria-label="切换导航"><Icon name="panel" /></Button><div><h1>{localOnly ? '本地草稿' : '企业草稿'}</h1><p className="muted">{state ? `${state.project.name} · ${localOnly ? '当前账号与项目的本地工作副本' : current ? '当前企业授权' : '企业授权离线'}` : localOnly ? '等待本地草稿范围确认' : '等待企业业务状态'}</p></div></div><Button variant="outline" disabled={busy} onClick={() => void model.refresh()}>{localOnly ? '刷新本地草稿' : '刷新资料与状态'}</Button></header>
     <div className="small">项目 {state?.project.id ?? '尚未确认'} · 最近同步 {state?.lastSyncAt ?? '尚无服务器同步时间'}</div>
     {view.pending && <div className="message" role="status">{view.pending === 'refresh' ? '正在刷新业务投影…' : '操作已提交，正在等待确认…'}</div>}
     {view.error && <div className="message" role="alert">{view.error}</div>}
     {view.notice && <div className="message" role="status">{view.notice}</div>}
-    {opening && <div className="message" role="status">正在等待原生会话就绪… <Button variant="outline" size="sm" onClick={() => { navigationRequest.current?.abort(new NativeNavigationError('cancelled')); }}>取消打开</Button></div>}
-    {navigationError && <div className="message" role="alert">{navigationError}</div>}
-    {state?.authority === 'offline' && <p className="message">可查看和编辑本地草稿。企业新动作已停止；联网后请刷新授权，不会自动上传。</p>}
+    {!localOnly && opening && <div className="message" role="status">正在等待原生会话就绪… <Button variant="outline" size="sm" onClick={() => { navigationRequest.current?.abort(new NativeNavigationError('cancelled')); }}>取消打开</Button></div>}
+    {!localOnly && navigationError && <div className="message" role="alert">{navigationError}</div>}
+    {localOnly ? <p className="message">本页仅查看和编辑本机工作副本。不会读取企业资料、启动任务或联网归档；账号或项目变化后重新核对本地范围。</p> : state?.authority === 'offline' && <p className="message">可查看和编辑本地草稿。企业新动作已停止；联网后请刷新授权，不会自动上传。</p>}
     {state && <div className="grid"><aside>
-      <section className="card"><h2>授权资料版本</h2><p className="muted">明确选择本次任务可用的资料。每份输入固定到实际修订和摘要。</p>
+      {!localOnly && <section className="card"><h2>授权资料版本</h2><p className="muted">明确选择本次任务可用的资料。每份输入固定到实际修订和摘要。</p>
         {!view.materials.length && <p className="muted">{current ? '没有当前可见资料。' : '离线时不读取新的企业资料。'}</p>}
         {view.materials.map(material => <div className="material" key={sourceKey(material)}><label><input type="checkbox" disabled={busy || !current} checked={view.selectedSources.some(ref => sourceKey(ref) === sourceKey(material))} onChange={() => model.toggleSource(material)} /><span>{material.name}<div className="small">{material.materialId} / {material.revisionId}</div><div className="small">SHA-256 {material.sha256}</div></span></label><Button variant="ghost" size="sm" disabled={busy || !current} onClick={() => void model.preview({ materialId: material.materialId, revisionId: material.revisionId, sha256: material.sha256 })}>查看纯文本快照</Button></div>)}
         {view.preview && <><h3 className="preview-label">资料快照 · 内容按不可信文本展示</h3><div className="small">{view.preview.materialId} / {view.preview.revisionId} · {view.preview.sha256}</div><pre>{view.preview.text}</pre></>}
         <form onSubmit={event => { event.preventDefault(); if (!dirty) void model.start(goal); }}><label className="field" htmlFor="afos-draft-goal">本次草稿目标</label><Textarea id="afos-draft-goal" value={goal} maxLength={MAX_GOAL_LENGTH} disabled={busy || !current} placeholder="说明需要整理的内容与草稿要求" onChange={event => setGoal(event.currentTarget.value)} /><p className="small">已选 {view.selectedSources.length} 份资料 · 使用企业固定专家和 Skill</p><Button type="submit" disabled={busy || dirty || !current || !goal.trim() || !view.selectedSources.length || state.drafts.some(isActive)}>生成本地草稿</Button></form>
-      </section>
-      <section className="card"><h2>草稿与原生会话</h2>{!state.drafts.length && <p className="muted">尚无本地草稿。</p>}{state.drafts.map(row => <button type="button" className="draft-row" key={row.draftId} aria-current={row.draftId === draft?.draftId} disabled={busy} onClick={() => chooseDraft(row.draftId)}>{row.draftId}<div className="small">{executionLabels[row.execution]} · {archiveLabel(row)}</div><div className="small">{row.updatedAt}</div></button>)}</section>
-    </aside><div>{draft ? <Editor key={`${state.project.id}/${draft.draftId}`} draft={draft} model={model} busy={busy} current={current} openSession={navigate} onDirty={setEditorDirty} /> : <section className="card"><h2>草稿预览</h2><p className="muted">选择资料并生成草稿，或打开现有工作副本。</p></section>}</div></div>}
+      </section>}
+      <section className="card"><h2>{localOnly ? '本地工作副本' : '草稿与原生会话'}</h2>{!state.drafts.length && <p className="muted">尚无本地草稿。</p>}{state.drafts.map(row => <button type="button" className="draft-row" key={row.draftId} aria-current={row.draftId === draft?.draftId} disabled={busy} onClick={() => chooseDraft(row.draftId)}>{row.draftId}<div className="small">{executionLabels[row.execution]} · {archiveLabel(row)}</div><div className="small">{row.updatedAt}</div></button>)}</section>
+    </aside><div>{draft ? <Editor key={`${scopeRevision}/${state.project.id}/${draft.draftId}`} draft={draft} model={model} busy={busy} current={current} localOnly={localOnly} openSession={navigate} onDirty={setEditorDirty} /> : <section className="card"><h2>草稿预览</h2><p className="muted">{localOnly ? '当前范围尚无可预览的本地工作副本。' : '选择资料并生成草稿，或打开现有工作副本。'}</p></section>}</div></div>}
     <Modal open={selectConfirm !== undefined} label="切换前放弃未保存编辑" className="afos-drafts-dialog" onClose={() => setSelectConfirm(undefined)}><h2>切换前核对编辑</h2><p>当前有未保存编辑。确认切换会放弃这些编辑；已保存的本地工作副本仍保留。</p><div className="actions"><Button variant="outline" onClick={() => setSelectConfirm(undefined)}>保留编辑</Button><Button disabled={busy} onClick={() => { const id = selectConfirm; setSelectConfirm(undefined); setDirty(false); if (id) model.selectDraft(id); }}>放弃未保存编辑并切换</Button></div></Modal>
   </main>;
 }

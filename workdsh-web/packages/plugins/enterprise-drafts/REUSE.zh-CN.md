@@ -1,5 +1,16 @@
 # AFOS-0006：原 Client 导航就绪
 
+## Source20 授权本地草稿 Client（实现前复用记录）
+
+新增替代公开 `./local-client`，factory id 为 `workdsh-plugin-enterprise-drafts-local`，
+只消费 Main 固定 `afosLocalDrafts.state/edit/subscribe`。复用原 DraftPanelModel、
+EnterpriseDraftPanel、严格 DTO/SHA parser、官方 main/sidebar Slots 与 Layout；
+不用 Connection/Remote/Session运行时，不建立第二授权或执行事实。Main/Recovery
+仍拥有账号/项目范围与本地记录，Client 强制 offline/scopedLocalOnly，cap事件先
+清视图/编辑范围再刷新。localOnly UI不渲染企业动作。dsh.localClient 是载体选择替代
+face的metadata，仍用原模块图，同Slot只选一个face。单元反例、原SlotRegistry、SSR
+为工程证据，实际Chromium/Electron归载体接线方，正式AT/P2不提升。
+
 授权来自用户 D08/D09 与 Root 独立 P1 Client 就绪切片，基线 source15
 ed79a0fad2b8cce09a14b145b196b37959650ecd。P1/G3 尚未通过；不新增 Main grant、
 remote 方法、执行所有者或 transport，仍由既有 Host 拒绝 mutation。

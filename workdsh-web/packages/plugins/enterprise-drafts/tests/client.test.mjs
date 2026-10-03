@@ -25,6 +25,7 @@ async function receiveArtifact(url, imports, expectedId) {
   vm.runInContext(await readFile(url, 'utf8'), realm, { filename: expectedId });
   assert.equal(declaration.id, expectedId);
   return { module: declaration.factory(name => { assert.ok(Object.hasOwn(imports, name), `undeclared external ${name}`); return imports[name]; }),
+    window: scope.window,
     // Match the real original HTTP carrier's decoded JSON realm, rather than
     // passing foreign-realm fixture object prototypes into strict DTO validation.
     copy: value => vm.runInContext('JSON.parse', realm)(JSON.stringify(value)) };
@@ -74,6 +75,53 @@ test('published official SlotRegistry gates declarations, paired entries revoke 
   response.resolve({ ok: true, value: state({ drafts: [draft()] }) }); await refreshing;
   assert.equal(model.getSnapshot().state, undefined); assert.equal(registry.entries('main').length, 0); assert.equal(registry.entries('sidebar.panellist').length, 0); assert.equal(listeners.size, 0); assert.equal(releases.filter(x => x === 'reference').length, 1);
   assert.equal(registry.entries('root').length, 1); releaseOwner(); await ctx.fiber.dispose();
+});
+test('local published Client consumes only Main state/edit with actual paired Slot lifecycle and hidden enterprise controls', async () => {
+  const { module: native } = await receiveArtifact(new URL('../node_modules/@deepseek-ai/dsh-client-ui-renderer/lib/client.js', import.meta.url), {
+    '@deepseek-ai/cordis': cordis, '@deepseek-ai/dsh-client-ui-slots': slots,
+    react: React, 'react-dom': ReactDom, 'react-dom/client': ReactDomClient, 'react/jsx-runtime': Jsx,
+  }, '@deepseek-ai/dsh-client-ui-renderer');
+  const { module: feature, copy, window } = await receiveArtifact(new URL('../dist/local-client.browser.js', import.meta.url), {
+    '@deepseek-ai/dsh-client-ui-primitives': { Button: props => React.createElement('button', props), Input: props => React.createElement('input', props) },
+    react: React, 'react-dom': ReactDom, 'react/jsx-runtime': Jsx,
+  }, 'workdsh-plugin-enterprise-drafts-local');
+  assert.deepEqual(Array.from(feature.inject), ['slots', 'layout']);
+  const calls = [], listeners = new Set(), pending = deferred(); let releases = 0, slow = false;
+  const hostile = '<script>localFixtureAttack()</script><img src=x onerror=localFixtureAttack()>', row = draft({ content: hostile, sha256: sha(hostile), lastSyncAt: '2026-10-02T12:00:00.000Z' });
+  let projection = state({ drafts: [row] });
+  window.afosLocalDrafts = {
+    state: async () => { calls.push('state'); return slow ? pending.promise : copy(projection); },
+    edit: async input => { calls.push(['edit', input]); return copy(draft({ ...input, sha256: sha(input.content) })); },
+    subscribe: listener => { listeners.add(listener); return () => { releases++; listeners.delete(listener); }; },
+  };
+  const selected = [];
+  const ctx = new cordis.Context(); ctx.provide('layout', { toggleSidebar() {}, selectPanel(key) { selected.push(key); } });
+  const slotFiber = ctx.plugin(native.SlotRegistry); await slotFiber.await();
+  const registry = ctx.get('slots'), fiber = ctx.plugin(feature); await fiber.await();
+  assert.equal(registry.entries('main').length, 0); assert.equal(registry.entries('sidebar.panellist').length, 0);
+  assert.deepEqual(selected, []);
+  const releaseOwner = registry.register({ name: 'root', children: { main: { kind: 'keyed', scope: 'root' }, 'sidebar.panellist': { kind: 'list', scope: 'root' } } }, () => null);
+  const main = registry.entries('main'); assert.equal(main.length, 1); assert.equal(registry.entries('sidebar.panellist').length, 1);
+  assert.deepEqual(selected, [feature.panelKey]);
+  const injected = main[0].inject(), model = injected.model;
+  assert.equal(injected.localOnly, true); assert.equal(injected.openSession, undefined);
+  await model.refresh(); assert.equal(model.getSnapshot().state.authority, 'offline'); assert.equal(model.getSnapshot().state.scopedLocalOnly, true);
+  const html = renderToStaticMarkup(React.createElement(main[0].component, injected));
+  const buttons = (html.match(/<button\b[\s\S]*?<\/button>/g) ?? []).join('');
+  for (const label of ['授权资料版本', 'afos-draft-goal', '打开原生会话', '请求取消', '确认后归档', '核对归档回执', '我确认提交此版本', '生成本地草稿']) assert.ok(!html.includes(label), label);
+  assert.match(buttons, /保存本地编辑/); assert.match(buttons, /刷新本地草稿/);
+  assert.match(html, /material-A/); assert.match(html, /revision-1/); assert.match(html, /最近同步/); assert.match(html, /2026-10-02T12:00:00.000Z/); assert.match(html, /内容摘要/);
+  assert.ok(!html.includes('<script>localFixtureAttack()')); assert.match(html, /&lt;script&gt;localFixtureAttack/); assert.ok(!html.includes('当前企业授权'));
+  await model.edit('draft-A', 'Saved through local Main');
+  assert.equal(model.getSnapshot().state.drafts[0].content, 'Saved through local Main'); assert.equal(calls.filter(value => typeof value === 'string').every(value => value === 'state'), true);
+  projection = state({ drafts: [draft({ content: 'New scope local draft', sha256: sha('New scope local draft') })] });
+  const revision = model.getScopeRevision(); for (const listener of listeners) listener();
+  assert.equal(model.getSnapshot().state, undefined); await model.refresh(); assert.equal(model.getScopeRevision(), revision + 1); assert.equal(model.getSnapshot().state.drafts[0].content, 'New scope local draft');
+  slow = true; const refreshing = model.refresh(); await fiber.dispose(); await fiber.await();
+  pending.resolve(copy(state({ drafts: [row] }))); await refreshing;
+  assert.equal(model.getSnapshot().state, undefined); assert.equal(listeners.size, 0); assert.equal(releases, 1);
+  assert.equal(registry.entries('main').length, 0); assert.equal(registry.entries('sidebar.panellist').length, 0); assert.equal(registry.entries('root').length, 1);
+  releaseOwner(); await ctx.fiber.dispose();
 });
 test('headless actual React panel escapes malicious material and draft text, shows receipt-only archive', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'afos-draft-ssr-'));

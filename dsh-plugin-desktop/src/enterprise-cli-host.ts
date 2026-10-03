@@ -28,6 +28,8 @@ export interface EnterpriseCliHostOptions {
   readonly runtimeProfile: string
   readonly model: ModelPolicy
   readonly writeLog?: (text: string) => void
+  /** Main-private notification after real readiness; never a child-reported state. */
+  readonly onUnexpectedStop?: () => Promise<void>
 }
 interface OwnedChild {
   readonly lifetime: AbortController
@@ -39,6 +41,8 @@ interface OwnedChild {
   attachment?: Attachment
   stopping?: Promise<void>
   releaseCutoff?: () => void
+  ready?: boolean
+  unexpectedReported?: boolean
 }
 export class EnterpriseCliHostError extends Error {
   constructor() { super('enterprise/cli-host-refused') }
@@ -154,10 +158,15 @@ export class EnterpriseCliHost implements EnterpriseHostLifecycle {
         stdio: ['ignore', 'pipe', 'pipe', 'ipc'], serialization: 'json', windowsHide: true, detached: process.platform !== 'win32',
       })
       owned.child = child; owned.preparationDone()
+      const unexpected = () => {
+        if (this.owned !== owned || !owned.ready || owned.stopping || owned.signal.aborted || owned.unexpectedReported) return
+        owned.unexpectedReported = true
+        void Promise.resolve().then(() => this.options.onUnexpectedStop?.()).catch(() => { this.options.writeLog?.('Enterprise CLI unexpected-stop handling was refused.\n') })
+      }
       ready.promise.catch(() => undefined)
       const failReady = () => ready.reject(new EnterpriseCliHostError())
-      child.once('error', failReady); child.once('exit', failReady)
-      child.once('disconnect', () => { failReady(); cutoff() })
+      child.once('error', failReady); child.once('exit', () => { unexpected(); failReady() })
+      child.once('disconnect', () => { unexpected(); failReady(); cutoff() })
       const readyCutoff = () => failReady(); signal.addEventListener('abort', readyCutoff, { once: true })
       const output = new RuntimeLogFilter(text => {
         if (text === 'AFOS_CLI_READY v1\n') { ready.resolve(); return }
@@ -182,6 +191,7 @@ export class EnterpriseCliHost implements EnterpriseHostLifecycle {
         if (!sawWelcome || !child.connected || child.exitCode !== null || child.signalCode !== null) refused()
         const current = await within(business.currentAuthority(signal), signal); signal.throwIfAborted()
         if (!sameAuthority(fresh, current) || !Number.isFinite(Date.parse(current.expiresAt)) || Date.parse(current.expiresAt) <= Date.now()) refused()
+        owned.ready = true
       } finally { signal.removeEventListener('abort', readyCutoff) }
     } catch {
       owned.preparationDone()

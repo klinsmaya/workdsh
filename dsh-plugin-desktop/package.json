@@ -20,18 +20,26 @@
     "build/tray-icon.svg",
     "build/tray-icon*.png",
     "lib/workdsh-main.js",
+    "lib/enterprise-preload.cjs",
+    "renderer/afos-local/**",
     "README.md",
     "README.zh.md",
     "THIRD_PARTY_NOTICES.md",
-    "afos-desktop-config.json"
+    "afos-desktop-config.json",
+    "ENTERPRISE_LOCAL_DRAFTS.md",
+    "ENTERPRISE_LOCAL_DRAFTS.zh.md",
+    "ENTERPRISE_LOCAL_DRAFTS.i18n.yaml",
+    "ENTERPRISE_LOCAL_CARRIER.md",
+    "ENTERPRISE_LOCAL_CARRIER.zh.md",
+    "ENTERPRISE_LOCAL_CARRIER.i18n.yaml"
   ],
   "engines": {
     "node": "^22.19.0 || >=24.0.0"
   },
   "scripts": {
-    "build": "node scripts/generate-windows-app-icon.mjs && node scripts/generate-mac-app-icon.mjs && node scripts/generate-tray-icons.mjs && node scripts/clean.mjs && tsdown && tsc -p tsconfig.json --emitDeclarationOnly",
+    "build": "node scripts/generate-windows-app-icon.mjs && node scripts/generate-mac-app-icon.mjs && node scripts/generate-tray-icons.mjs && node scripts/clean.mjs && tsdown && node scripts/build-enterprise-renderer.mjs && tsc -p tsconfig.json --emitDeclarationOnly",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.tests.json --noEmit",
-    "test": "vitest run && node --test scripts/verify-profile-release.test.mjs",
+    "test": "vitest run && node --test scripts/verify-profile-release.test.mjs && node --experimental-transform-types --test scripts/enterprise-local-carrier.test.mjs scripts/enterprise-local-main.test.mjs scripts/enterprise-cli-notification.test.mjs",
     "check": "yarn run build && yarn run typecheck && yarn run test",
     "check:win-package": "yarn run check",
     "check:mac-package": "yarn run check",
@@ -93,6 +101,8 @@
       "build/tray-icon.svg",
       "build/tray-icon*.png",
       "lib/workdsh-main.js",
+      "lib/enterprise-preload.cjs",
+      "renderer/afos-local/**",
       "package.json",
       "!node_modules/**",
       "afos-desktop-config.json"

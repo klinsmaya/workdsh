@@ -21,12 +21,15 @@ export class DraftPanelModel {
   private view: PanelSnapshot = EMPTY;
   private readonly listeners = new Set<() => void>();
   private epoch = 0;
+  private scopeRevision = 0;
   private closed = false;
   private request?: AbortController;
   private refreshJob?: Promise<void>;
   private retryStart?: { fingerprint: string; operationId: string };
   constructor(private readonly client: EnterpriseDraftClient, private readonly operationId: () => string = () => crypto.randomUUID()) {}
   readonly getSnapshot = (): PanelSnapshot => this.view;
+  /** UI cache boundary, not an account or authorization assertion. */
+  readonly getScopeRevision = (): number => this.scopeRevision;
   readonly subscribe = (listener: () => void): (() => void) => { this.listeners.add(listener); return () => this.listeners.delete(listener); };
   private publish(next: PanelSnapshot): void {
     if (this.closed) return;
@@ -36,7 +39,7 @@ export class DraftPanelModel {
   /** Connection/account authority changed. No previous view survives the repull. */
   invalidate(): void {
     if (this.closed) return;
-    this.epoch++; this.request?.abort(); this.request = undefined; this.refreshJob = undefined; this.retryStart = undefined;
+    this.scopeRevision++; this.epoch++; this.request?.abort(); this.request = undefined; this.refreshJob = undefined; this.retryStart = undefined;
     this.publish(EMPTY);
   }
   close(): void { this.invalidate(); this.closed = true; this.listeners.clear(); }

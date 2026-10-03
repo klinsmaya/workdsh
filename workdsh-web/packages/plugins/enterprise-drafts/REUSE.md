@@ -1,5 +1,21 @@
 # AFOS-0006: original Client navigation readiness
 
+## Main-owned local draft Client continuation (before implementation)
+
+The authorized Source20 continuation adds an alternative public `./local-client`
+face over the fixed preload `window.afosLocalDrafts.state/edit/subscribe` capability.
+It reuses `DraftPanelModel`, `EnterpriseDraftPanel`, the existing strict DTO/hash
+parsers, and the original main/sidebar Slot and Layout owners. The Client imports
+no Connection, Session or Remote runtime. Main remains the account/project scope
+and Recovery owner. The renderer forces every projection to offline/local-only,
+and capability changes clear the view and editor scope before repulling. The
+local panel renders no material/start/cancel/archive/native-navigation actions.
+The public ModuleLoader artifact has id `workdsh-plugin-enterprise-drafts-local`;
+`dsh.localClient` is owning-carrier metadata for selecting this alternative face,
+not another Loader. Choose one drafts face for the shared Slot key. Validation
+is local types, unit negative cases, original SlotRegistry and React SSR; actual
+Electron/Chromium integration belongs to the carrier owner. No AT/P2 promotion.
+
 Authorized continuation: user D08/D09 and Root's isolated P1 Client readiness
 slice, based on source15 ed79a0fad2b8cce09a14b145b196b37959650ecd. P1/G3 remains
 not passed; this decision adds no Main grant, remote method, execution owner or

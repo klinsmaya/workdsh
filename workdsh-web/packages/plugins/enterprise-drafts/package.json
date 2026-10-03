@@ -13,6 +13,10 @@
       "types": "./dist/client.d.ts",
       "default": "./dist/client.browser.js"
     },
+    "./local-client": {
+      "types": "./dist/local-client.d.ts",
+      "default": "./dist/local-client.browser.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [
@@ -56,6 +60,21 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "localClient": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-primitives"
+      ],
+      "external": [
+        "@deepseek-ai/dsh-client-ui-primitives",
+        "react",
+        "react-dom",
+        "react/jsx-runtime"
+      ]
     },
     "client": {
       "platform": "web",

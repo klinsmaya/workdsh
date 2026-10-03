@@ -27,6 +27,44 @@ client-only activity feature). It registers no Host capability or fake response.
 
 ## Behavior and limits
 
+### Fixed local-only Client face
+
+The explicit public `./local-client` entry and `dist/local-client.browser.js`
+artifact use factory id `workdsh-plugin-enterprise-drafts-local`. Its public
+service dependencies are only `slots` and `layout`; the owning carrier selects
+the paired `dsh.localClient.inject/external` module metadata through the original
+module graph. It must choose this face instead of the normal drafts Client face,
+since both contribute the same main/sidebar Slot key.
+After the original main Slot owner is available and the entry is registered, the
+local face calls the public `layout.selectPanel(panelKey)` to show local drafts
+initially. The normal online face does not acquire this default-selection behavior.
+
+The trusted preload capability is exactly `window.afosLocalDrafts` with
+`state(): Promise<EnterpriseDraftState>`,
+`edit({draftId, content}): Promise<EnterpriseDraftView>` and
+`subscribe(listener): unsubscribe`. Replies are the existing direct business
+DTOs, without a transport envelope or extra fields. Main rechecks its private
+account/project scope on every operation; the renderer never chooses an account,
+project, URL, path, secret or generic IPC channel. Existing strict parsers verify
+fields, UTF-8 limits, content hashes and receipt facts. The adapter then forces
+`authority: 'offline'` and adds a renderer-only `scopedLocalOnly: true` marker.
+This projection cannot authorize new enterprise actions.
+
+The alternative reuses the original draft model and panel, retaining sources,
+hashes, sync times and plain-text preview/edit. With `localOnly: true`, materials,
+start, cancel, archive (including its confirmation dialog) and native Session
+navigation controls are absent from the rendered tree. The adapter itself
+rejects those operations. Capability events invalidate the model before refresh;
+event, caller and module lifetimes are rechecked after asynchronous hash parsing.
+An invalidation also changes an editor cache key, so an account/project cutoff
+cannot preserve dirty content under a reused project/draft id. Ordinary refresh
+does not change that key. Disposal removes the Main subscription and both Slots.
+There is no Connection/Remote fallback, browser persistence or automatic upload.
+
+The carrier owner supplies the actual preload capability and original frontend
+assembly. This package's unit/SSR/SlotRegistry evidence does not certify actual
+Electron IPC, complete original-shell controls or formal target desktop AT.
+
 ### Client readiness continuation / reuse decision
 
 The original public Connection generation observable, generated

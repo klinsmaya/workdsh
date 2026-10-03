@@ -95,13 +95,18 @@ export async function parseDraft(value: unknown): Promise<EnterpriseDraftView> {
     ...(archiveReceipt === undefined ? {} : { receipt: archiveReceipt }),
   });
 }
-async function parseState(value: unknown): Promise<EnterpriseDraftState> {
+export async function parseState(value: unknown): Promise<EnterpriseDraftState> {
   const row = record(value, ['contractVersion', 'project', 'authority', 'drafts'], ['lastSyncAt']);
   if (row.contractVersion !== 'afos.drafts.v1' || typeof row.authority !== 'string' || !['current', 'offline'].includes(row.authority)) invalid();
   const project = record(row.project, ['id', 'name']);
   const drafts = await Promise.all(array(row.drafts, 8, true).map(parseDraft));
   if (new Set(drafts.map(d => d.draftId)).size !== drafts.length) invalid();
-  return Object.freeze({ contractVersion: 'afos.drafts.v1', project: Object.freeze({ id: id(project.id), name: text(project.name, 512) }), authority: row.authority as EnterpriseDraftState['authority'], drafts: Object.freeze(drafts), ...(row.lastSyncAt === undefined ? {} : { lastSyncAt: date(row.lastSyncAt) }) });
+  return Object.freeze({ contractVersion: 'afos.drafts.v1', project: Object.freeze({ id: id(project.id), name: text(project.name, 1024) }), authority: row.authority as EnterpriseDraftState['authority'], drafts: Object.freeze(drafts), ...(row.lastSyncAt === undefined ? {} : { lastSyncAt: date(row.lastSyncAt) }) });
+}
+/** Fixed local/remote edit payload; shares the same id and UTF-8 bounds. */
+export function parseDraftEdit(value: unknown): { readonly draftId: string; readonly content: string } {
+  const row = record(value, ['draftId', 'content']);
+  return Object.freeze({ draftId: id(row.draftId), content: boundedContent(row.content) });
 }
 function parseMaterials(value: unknown): readonly EnterpriseMaterialView[] {
   const rows = array(value, 2500, true).map(value => { const row = record(value, ['materialId', 'revisionId', 'sha256', 'name']); return Object.freeze({ materialId: id(row.materialId), revisionId: id(row.revisionId), sha256: hash(row.sha256), name: text(row.name, 512) }); });
@@ -142,7 +147,7 @@ export function createDraftClient(rpc: Pick<ClientConnectionRpc, 'call'>, lifeti
       const goal = text(row.goal, MAX_GOAL_LENGTH); if (!goal.trim()) invalid();
       return checked(parseDraft(await call('start', { sources: refs(row.sources), goal, operationId: id(row.operationId) }, signal)), signal);
     },
-    edit: async (draftId: string, content: string, signal?: AbortSignal) => checked(parseDraft(await call('edit', { draftId: id(draftId), content: boundedContent(content) }, signal)), signal),
+    edit: async (draftId: string, content: string, signal?: AbortSignal) => checked(parseDraft(await call('edit', parseDraftEdit({ draftId, content }), signal)), signal),
     cancel: async (draftId: string, signal?: AbortSignal) => checked(parseDraft(await call('cancel', { draftId: id(draftId) }, signal)), signal),
     archive: async (draftId: string, expectedSha256: string, signal?: AbortSignal) => checked(parseDraft(await call('archive', { draftId: id(draftId), expectedSha256: hash(expectedSha256) }, signal)), signal),
   });

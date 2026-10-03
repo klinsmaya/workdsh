@@ -1,0 +1,6 @@
+source: ENTERPRISE_LOCAL_CARRIER.md
+sourceSha256: 96ea224dbe8077edbd5a19305fa9a51d81a683bbe867658a7e3b809cb8bf1abf
+translations:
+  zh-CN:
+    file: ENTERPRISE_LOCAL_CARRIER.zh.md
+    sha256: 23b1e8749fb6f11814125b5fcea6b7bca6b4caad67f429ae43631c416ba7bd26

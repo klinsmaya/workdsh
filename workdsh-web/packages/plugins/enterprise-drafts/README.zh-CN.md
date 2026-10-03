@@ -1,5 +1,28 @@
 # 企业草稿界面 · 0.1.0-alpha.1
 
+## Main 限定范围的本地 Client face
+
+公开 `./local-client` 生成 `dist/local-client.browser.js`，ModuleLoader factory id
+为 `workdsh-plugin-enterprise-drafts-local`。服务只注入 `slots/layout`；载体经原
+模块图选取 `dsh.localClient.inject/external`。它与普通 face 共用原 main/sidebar
+Slot key，必须只激活一个，不注册新 Loader、Connection、Session 或 Remote。
+原main Slot owner存在且注册完成后，local face调用公开 `layout.selectPanel(panelKey)`
+初始展示本地草稿，普通在线face不增加此默认选择行为。
+
+唯一 preload 能力为 `window.afosLocalDrafts.state()`、
+`edit({draftId,content})`、`subscribe(listener):unsubscribe`。响应直接为既有
+state/draft DTO，不套 transport envelope、不增 secret/路径/URL/actor 字段。
+Main 每次验证私有账号和项目范围；Client 复用严格字段、64KiB UTF-8、SHA与回执
+校验，解析后强制 `authority:'offline'` 和仅 Renderer 使用的 `scopedLocalOnly:true`。
+这不代表新鲜企业授权，不提供泛化 IPC、浏览器持久缓存或联网回退。
+
+原 model/panel 保留来源、摘要、最近同步、纯文本预览和编辑。`localOnly:true`
+真正不渲染资料、新建任务、取消、归档及确认框、打开原生会话的动作；adapter也拒绝
+这些方法。cap 变化先 invalidate 再刷新，异步 SHA 后重验旧请求；editor cache key
+在范围失效时更新，避免同项目/草稿 id 下保留旧账号未保存正文。普通刷新不重置该key。
+官方生命周期释放 Main subscription 与两个 Slot。实际 Electron/preload/完整原生
+界面联调归载体 owner；单元/SSR/SlotRegistry 证据不提高正式 AT/P1G3/P2 状态。
+
 通过官方 main 与 sidebar.panellist 同 key Slots 提供企业草稿页，消费固定的
 Main 业务 facade。此模块不拥有 Agent、Session、模型路由、传输、凭据或持久执行
 状态。Host 入口仅用于官方 Client 发现，实际实现位于 Client；不注册假 Host 能力。

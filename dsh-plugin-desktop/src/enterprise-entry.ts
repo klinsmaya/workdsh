@@ -35,7 +35,7 @@ export interface EnterpriseEntryOptions {
   readonly configPath: string
   readonly dataDirectory: string
   readonly storage: Parameters<typeof osTokenEncryption>[0]
-  readonly host: EnterpriseHostLifecycle
+  readonly host: EnterpriseHostLifecycle | ((config: ManagedDesktopConfig) => EnterpriseHostLifecycle)
   readonly openBrowser: (url: string) => Promise<void>
 }
 export function createEnterpriseEntry(options: EnterpriseEntryOptions): EnterpriseMainSession | undefined {
@@ -43,5 +43,5 @@ export function createEnterpriseEntry(options: EnterpriseEntryOptions): Enterpri
   if (!config) return undefined
   return new EnterpriseMainSession(config, options.dataDirectory,
     new RefreshTokenVault(join(options.dataDirectory, 'credentials'), osTokenEncryption(options.storage)),
-    options.host, options.openBrowser)
+    typeof options.host === 'function' ? options.host(config) : options.host, options.openBrowser)
 }
