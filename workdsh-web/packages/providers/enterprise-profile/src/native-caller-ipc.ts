@@ -3,6 +3,7 @@ import { EnterpriseProfileError } from './snapshot-authority.js';
 export const NATIVE_WITNESS_HEADER = 'x-afos-native-witness';
 export const CALLER_HTTP_PATHS = Object.freeze([
   '/api/session/list', '/api/session/page', '/api/session/projections',
+  '/api/settings/describe',
   ...['state', 'materials', 'snapshot', 'start', 'edit', 'cancel', 'archive'].map(name => '/api/afos/drafts/' + name),
   '/api/afos/createSession', '/api/afos/readSnapshot', '/api/afos/renderDraft',
 ]);

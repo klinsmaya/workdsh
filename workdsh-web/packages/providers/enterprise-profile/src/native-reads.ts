@@ -12,6 +12,8 @@ import type {} from './runtime.js';
 import type {} from './authority-service.js';
 import type {} from '@deepseek-ai/dsh-api-gateway';
 import type {} from './native-ws-http-admission.js';
+import { EnterpriseNativeReadCatalog } from './native-read-catalog.js';
+import { remoteErrorOf } from '@deepseek-ai/dsh-typert-protocol';
 
 export const NATIVE_READ_ENDPOINTS = Object.freeze(['session/list', 'session/page', 'session/projections', 'session/follow', 'session/control'] as const);
 const UNARY = new Set<string>(NATIVE_READ_ENDPOINTS.slice(0, 3));
@@ -30,6 +32,7 @@ interface Lease {
 export interface NativeReadBridgeOptions {
   readonly reader: Context;
   readonly controller: SessionController;
+  readonly controllerContext?: Context;
   readonly workspace: string;
   readonly requireCallerProof?: boolean;
 }
@@ -49,9 +52,12 @@ export class EnterpriseNativeReadBridge extends Service {
   #installation: OwnedNativeReadInstallation | undefined;
   readonly #controller: SessionController;
   readonly #requireCallerProof: boolean;
+  readonly catalog: EnterpriseNativeReadCatalog | undefined;
   constructor(ctx: Context, options: NativeReadBridgeOptions) {
     super(ctx, 'afosNativeReadBridge');
     this.workspace = options.workspace; this.#reader = options.reader; this.#controller = options.controller; this.#requireCallerProof = options.requireCallerProof === true;
+    if(this.#requireCallerProof&&!options.controllerContext)throw denied();
+    this.catalog = this.#requireCallerProof ? new EnterpriseNativeReadCatalog(ctx, options.controller, options.controllerContext!, this.#lifetime.signal) : undefined;
     this.assertPrivateComposition();
     this.#shared = options.reader.connection.createSharedFetchHandler('/api');
     ctx.effect(() => async () => {
@@ -151,6 +157,22 @@ export class EnterpriseNativeReadBridge extends Service {
   };
   /** Unary response encoding remains the original Connection/Gateway's responsibility. */
   invoke = async (endpoint: string, payload: unknown, callerSignal: AbortSignal): Promise<ConnectionRpcHandlerResult> => {
+    const catalogProof=this.ctx.get('afosNativeHttpProof')?.current();
+    if(this.catalog && catalogProof && ['session/list','session/page','session/projections','settings/describe'].includes(endpoint)) {
+      this.assertPrivateComposition(); const proof=catalogProof; proof.assertCurrent();
+      const signal=AbortSignal.any([callerSignal,proof.signal]); await proof.assertFresh();
+      exactRecord(payload,['args']); exactRecord(payload.args,endpoint==='settings/describe'?[]:[endpoint==='session/list'?'_request':'request']);
+      try {
+        const value=endpoint==='session/list'?await this.catalog.list(payload.args._request,signal)
+          :endpoint==='session/page'?await this.catalog.page(payload.args.request,signal)
+          :endpoint==='session/projections'?await this.catalog.projections(payload.args.request,signal):await this.catalog.describe(signal);
+        await proof.assertFresh(); proof.assertCurrent(); signal.throwIfAborted(); return {ok:true,value};
+      }catch(error){
+        await proof.assertFresh();proof.assertCurrent();signal.throwIfAborted();
+        const original=remoteErrorOf(error);if(!original)throw error;
+        return {ok:false,error:{code:original.code,message:original.message,details:original.details}};
+      }
+    }
     if (!UNARY.has(endpoint)) {
       if (STREAM.has(endpoint)) throw new EnterpriseProfileError('gateway/signature-invalid');
       throw denied();

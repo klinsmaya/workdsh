@@ -6,10 +6,39 @@ import { bindTypertRemote, RemoteError } from '@deepseek-ai/dsh-typert-protocol'
 import type {} from '@deepseek-ai/dsh-api-gateway';
 import type {} from './native-reads.js';
 import type {} from './native-ws-http-admission.js';
+import { originalReadControllerExport } from './native-loader-rows.js';
 
 const NAME = 'afosOwnedNativeMuxRead';
 const READS = new Set(['list', 'page', 'projections', 'follow', 'control']);
 const unavailable = () => new RemoteError('afos/session-view-unavailable', 'Owned live Session view unavailable', {});
+function contribution(ctx:Context,original:TypertContribution,namespace:string,service:string,reads:readonly string[],owner:object):void {
+  const invocations=original.invocations.filter(item=>item.namespace===namespace);
+  if(!invocations.length||reads.some(method=>!invocations.some(item=>item.method===method)))throw unavailable();
+  for(const item of invocations)if(!reads.includes(item.method))Object.defineProperty(owner,item.method,{value:()=>{throw unavailable();}});
+  ctx.typert.register({package:'workdsh-provider-enterprise-profile/native-read-catalog/'+namespace,face:'host',schemas:[],
+    model:{services:[],events:[],objects:[]},invocations:invocations.map(item=>({...item,id:'workdsh-provider-enterprise-profile/native-read-catalog#'+namespace+'/'+item.method,service}))});
+}
+async function* catalogStream(ctx:Context,kind:'workspace'|'control',caller?:AbortSignal):AsyncIterable<unknown> {
+  const invocation=ctx.invocation,catalog=ctx.afosNativeReadBridge.catalog;if(!invocation||!catalog)throw unavailable();
+  const proof=ctx.afosNativeHttpProof.carrierProof(invocation.peer),signal=AbortSignal.any([caller??invocation.signal,proof.signal]);
+  await proof.assertFresh();proof.assertCurrent();
+  const source=kind==='workspace'?catalog.workspace(signal):catalog.control(signal);
+  for await(const frame of source){await proof.assertFresh();proof.assertCurrent();signal.throwIfAborted();yield frame;}
+}
+class CatalogWorkspace extends Service {
+  static inject=['typert','afosNativeReadBridge','afosNativeHttpProof'];
+  readonly typertRemote;
+  constructor(ctx:Context,original:TypertContribution){super(ctx,'afosOwnedWorkspaceRead');this.typertRemote=bindTypertRemote(this,'afosOwnedWorkspaceRead',{namespace:'workspace'});contribution(ctx,original,'workspace','afosOwnedWorkspaceRead',['follow'],this);}
+  follow(signal?:AbortSignal){return catalogStream(this.ctx,'workspace',signal);}
+}
+class CatalogSettings extends Service {
+  static inject=['typert','afosNativeReadBridge','afosNativeHttpProof'];
+  readonly typertRemote;
+  constructor(ctx:Context,original:TypertContribution){super(ctx,'afosOwnedSettingsRead');this.typertRemote=bindTypertRemote(this,'afosOwnedSettingsRead',{namespace:'settings'});contribution(ctx,original,'settings','afosOwnedSettingsRead',['describe'],this);}
+  async describe(){const invocation=this.ctx.invocation,catalog=this.ctx.afosNativeReadBridge.catalog;if(!invocation||!catalog)throw unavailable();
+    const proof=this.ctx.afosNativeHttpProof.carrierProof(invocation.peer);await proof.assertFresh();proof.assertCurrent();
+    const value=await catalog.describe(AbortSignal.any([invocation.signal,proof.signal]));await proof.assertFresh();proof.assertCurrent();return value;}
+}
 /** Only this fresh Main business facade is visible to the original public mux Gateway. */
 export default class NativeWsFacade extends Service {
   static inject = ['afosNativeReadBridge', 'afosNativeHttpProof', 'typert', 'typertGateway'];
@@ -29,6 +58,13 @@ export default class NativeWsFacade extends Service {
     ctx.effect(() => ctx.typertGateway.registerRemoteEvents(signal => (async function* () {
       await new Promise<void>(resolve => { if (signal.aborted) resolve(); else signal.addEventListener('abort', () => resolve(), { once: true }); });
     })(), { home: '' }), 'afos-empty-owned-native readiness');
+  }
+  async [Service.init]():Promise<void>{
+    if(!this.ctx.afosNativeReadBridge.catalog)throw unavailable();
+    const workspace=await import(originalReadControllerExport('@deepseek-ai/dsh-api-workspace-controller','/typert'));
+    const settings=await import(originalReadControllerExport('@deepseek-ai/dsh-api-settings-controller','/typert'));
+    await this.ctx.plugin(CatalogWorkspace,workspace.TYPERT as TypertContribution).await();
+    await this.ctx.plugin(CatalogSettings,settings.TYPERT as TypertContribution).await();
   }
   private async unary(endpoint: string, payload: unknown, signal?: AbortSignal) {
     const invocation = this.ctx.invocation; if (!invocation) throw unavailable();
@@ -58,6 +94,6 @@ export default class NativeWsFacade extends Service {
     return this.ownedStream('session/follow', { args: { request } }, signal);
   }
   control(signal?: AbortSignal): AsyncIterable<unknown> {
-    return this.ownedStream('session/control', { args: {} }, signal);
+    return catalogStream(this.ctx,'control',signal);
   }
 }

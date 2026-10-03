@@ -108,4 +108,4 @@ Preserve personal Profiles, Sessions, owner records, namespace drafts, credentia
 and server receipts. No upstream, production, merge, release or deployment action
 is implied.
 
-The optional original CLI online carrier now has a private ready handoff and an owned Electron Session/window connection. Production capabilities remain refused; cold catalog/history and full Composer support remain separate gaps. See [ONLINE_CARRIER.md](./ONLINE_CARRIER.md).
+The optional original CLI online carrier now has a private ready handoff and an owned Electron Session/window connection. Production capabilities remain refused. The fresh owned read catalog and cold page/projections component are described in [READONLY_CATALOG.md](./READONLY_CATALOG.md); settings, retained cold follow and full Composer remain gaps, and combined Root/Main integration still requires verification. See [ONLINE_CARRIER.md](./ONLINE_CARRIER.md).

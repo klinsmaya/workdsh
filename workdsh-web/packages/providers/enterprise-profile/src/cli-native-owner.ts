@@ -15,7 +15,7 @@ export function apply(ctx:Context):void {
  ctx.provide('afosNativeCallerProof',ready.nativeCaller);
  ctx.provide('afosNativeParentConnection',ctx.connection);ctx.provide('afosNativeParentWebServer',ctx.webServer);
  const captures:NativeAssemblyCaptures={
-  controller(value){if(controller)throw new EnterpriseProfileError('afos/native-read-denied');controller=true;ctx.provide('afosNativePrivateController',value);},
+  controller(value,context){if(controller)throw new EnterpriseProfileError('afos/native-read-denied');controller=true;ctx.provide('afosNativePrivateController',value);ctx.provide('afosNativePrivateControllerContext',context);},
   reader(value){if(reader)throw new EnterpriseProfileError('afos/native-read-denied');reader=true;ctx.provide('afosNativePrivateReader',value);},
   mux(value){if(mux||value.get('connection')?.operator!==ctx.connection.operator||value.get('webServer')===ctx.webServer)throw new EnterpriseProfileError('afos/native-read-denied');mux=true;ctx.provide('afosCliNativeReady',true);},
  };

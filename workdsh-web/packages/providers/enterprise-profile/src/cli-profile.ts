@@ -11,7 +11,7 @@ export const MANAGED_CLI_SCOPE_KEYS=Object.freeze([
   'afosDraftRuntime','afosEnterpriseIngress','storage','storage.backend.json','storageDomain','tools','sessions',
   'sessionProjections','sessionPersistence','llm','systemPrompt','agents','agentLoop','skills',
   'agentPresets','webServer','credentials','connection','typertGateway','fs','mcp','bash','ptc',
-  'settings','sessionController','afosNativeCallerProof','afosNativeAssemblyCapture','afosNativeParentWebServer','afosNativeParentConnection','afosNativePrivateController','afosNativePrivateReader','afosNativeReadBridge','afosNativeHttpProof',
+  'settings','sessionController','afosNativeCallerProof','afosNativeAssemblyCapture','afosNativeParentWebServer','afosNativeParentConnection','afosNativePrivateController','afosNativePrivateControllerContext','afosNativePrivateReader','afosNativeReadBridge','afosNativeHttpProof',
 ]);
 /** Fixed zero-expression patch for an otherwise empty, Main-owned CLI Profile. */
 export function managedCliProfilePatch(options:CoreRowOptions){

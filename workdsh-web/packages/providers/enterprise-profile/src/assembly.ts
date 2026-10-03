@@ -55,11 +55,11 @@ export async function bootEnterpriseNativeWsCore(options: EnterpriseNativeWsAsse
 async function bootCore(options: EnterpriseAssemblyOptions, nativeReads: boolean, nativeCaller?: NativeCallerProof): Promise<Context> {
   const rows = fixedEnterpriseCoreRows(options);
   const require = createRequire(import.meta.url);
-  let nativeController: SessionController | undefined, nativeReader: Context | undefined, nativeMux: Context | undefined;
+  let nativeController: SessionController | undefined, nativeControllerContext:Context|undefined, nativeReader: Context | undefined, nativeMux: Context | undefined;
   let rootOwner: Context | undefined;
   const nativeWorkspace = join(options.root, 'native-workspace');
   const nativeCaptures: NativeAssemblyCaptures = {
-    controller(value) { if (nativeController) throw new EnterpriseProfileError('afos/native-read-denied'); nativeController = value; if(nativeCaller)rootOwner?.provide('afosNativePrivateController',value); },
+    controller(value,context) { if (nativeController) throw new EnterpriseProfileError('afos/native-read-denied'); nativeController = value; nativeControllerContext=context; if(nativeCaller){rootOwner?.provide('afosNativePrivateController',value);rootOwner?.provide('afosNativePrivateControllerContext',context);} },
     reader(value) { if (nativeReader) throw new EnterpriseProfileError('afos/native-read-denied'); nativeReader = value; if(nativeCaller)rootOwner?.provide('afosNativePrivateReader',value); },
     mux(value) { if (nativeMux) throw new EnterpriseProfileError('afos/native-read-denied'); nativeMux = value; },
   };
@@ -92,7 +92,7 @@ async function bootCore(options: EnterpriseAssemblyOptions, nativeReads: boolean
     }
     if (nativeReads) {
       if (!nativeController || !nativeReader) throw new EnterpriseProfileError('afos/native-read-denied');
-      if (!nativeCaller) await ctx.plugin(EnterpriseNativeReadBridge, { controller: nativeController, reader: nativeReader, workspace: nativeWorkspace });
+      if (!nativeCaller) await ctx.plugin(EnterpriseNativeReadBridge, { controller: nativeController, controllerContext:nativeControllerContext, reader: nativeReader, workspace: nativeWorkspace });
       if (!ctx.get('afosNativeReadBridge')) throw new EnterpriseProfileError('afos/native-read-denied');
       if (nativeCaller && (!nativeMux || nativeMux.get('connection')?.operator !== ctx.get('connection')?.operator
         || nativeMux.get('webServer') === ctx.get('webServer') || !ctx.get('afosNativeHttpProof'))) throw new EnterpriseProfileError('afos/native-read-denied');

@@ -192,7 +192,7 @@ export class EnterpriseProfileIngress extends Service {
       const caller = captureRpcCaller(this.ctx, signal); signal = caller.signal;
       await caller.assertFresh();
       signal.throwIfAborted();
-      if (NATIVE_READ_ENDPOINTS.includes(endpoint as typeof NATIVE_READ_ENDPOINTS[number])) {
+    if (NATIVE_READ_ENDPOINTS.includes(endpoint as typeof NATIVE_READ_ENDPOINTS[number]) || endpoint === 'settings/describe') {
         const bridge = this.ctx.get('afosNativeReadBridge');
         if (!bridge) throw new EnterpriseProfileError('afos/profile-endpoint-denied');
         return await caller.complete(await bridge.invoke(endpoint, payload, signal));

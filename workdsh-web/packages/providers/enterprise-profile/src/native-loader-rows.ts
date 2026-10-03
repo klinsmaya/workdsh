@@ -4,6 +4,13 @@ import { mkdirSync, lstatSync } from 'node:fs';
 import type { ModelPolicy } from '@afos/model-adapter';
 import { EnterpriseProfileError } from './snapshot-authority.js';
 interface NativeRow { readonly id:string; readonly name:string; readonly group?:boolean; readonly isolate?:Record<string,string|boolean>; readonly config?:unknown }
+/** Resolve only these original graph public exports from their declared web-app package context. */
+export function originalReadControllerExport(name: '@deepseek-ai/dsh-api-workspace-controller' | '@deepseek-ai/dsh-api-settings-controller', subpath = ''): string {
+ const require=createRequire(import.meta.url),cli=createRequire(require.resolve('@deepseek-ai/dsh/package.json'));
+ const web=createRequire(cli.resolve('@deepseek-ai/dsh-web-app/package.json'));
+ if(subpath!==''&&subpath!=='/typert')throw new EnterpriseProfileError('afos/native-read-denied');
+ return web.resolve(name+subpath);
+}
 function managedDirectory(path:string):void {
  if(!isAbsolute(path))throw new EnterpriseProfileError('afos/profile-storage-denied');
  mkdirSync(path,{recursive:true,mode:0o700});const stat=lstatSync(path);
@@ -20,7 +27,7 @@ export function fixedNativeLoaderRows(options:{readonly root:string;readonly mod
     const privateConnection = 'afos-owned-native-connection';
     const closedWeb = 'afos-owned-native-web-absent';
     const aliases = ['commands', 'attachments', 'fs', 'agentDefaultModel', 'sessionQuery', 'workspaceRegistry',
-      'fileReferences', 'fileUploads', 'sessionController', 'sessionFileReferences', 'sessionSkillCatalog'];
+      'fileReferences', 'fileUploads', 'sessionController', 'sessionFileReferences', 'sessionSkillCatalog', 'workspaceController', 'settingsController', 'credentialsController'];
     const nativeConfig: Record<string, unknown> = {
       '@deepseek-ai/dsh-attachment-local': { dshHome: options.root, maxImageBytes: 65536, maxImagesPerMessage: 1, maxMessageImageBytes: 65536 },
       '@deepseek-ai/dsh-fs-local': { cwd: nativeWorkspace },
@@ -35,6 +42,9 @@ export function fixedNativeLoaderRows(options:{readonly root:string;readonly mod
       isolate: { connection: privateConnection, webServer: closedWeb, typertGateway: true, typert: true,
         ...Object.fromEntries(aliases.map(name => [name, true])) },
       config: [...controllerNames.map(name => row(name, 'afos-native-controller', nativeConfig[name])),
+        ...(mux ? ['@deepseek-ai/dsh-api-workspace-controller', '@deepseek-ai/dsh-api-settings-controller'].map(name => ({
+          id:'afos-native-readonly-'+name,name:originalReadControllerExport(name as Parameters<typeof originalReadControllerExport>[0]),
+        })) : []),
         row('workdsh-provider-enterprise-profile/native-controller-capture', 'afos-native-controller')] });
     rows.push({ id: 'afos-private-owned-native-reader', name: require.resolve('@deepseek-ai/cordis-plugin-group'), group: true,
       isolate: { connection: privateConnection, webServer: closedWeb, typertGateway: true, typert: true,
@@ -46,7 +56,7 @@ export function fixedNativeLoaderRows(options:{readonly root:string;readonly mod
   if (mux) {
     const isolated = ['commands', 'attachments', 'fs', 'agentDefaultModel', 'sessionQuery', 'workspaceRegistry',
       'fileReferences', 'fileUploads', 'sessionController', 'sessionFileReferences', 'sessionSkillCatalog', 'afosOwnedNativeRead',
-      'afosOwnedNativeMuxRead', 'afosNativePrivateController', 'afosNativePrivateReader', 'llm', 'agentPresets'];
+      'afosOwnedNativeMuxRead', 'afosNativePrivateController', 'afosNativePrivateControllerContext', 'afosNativePrivateReader', 'llm', 'agentPresets'];
     rows.push({ id: 'afos-native-loader-bridge', name: require.resolve('workdsh-provider-enterprise-profile/native-ws-bridge'), config: { workspace: nativeWorkspace } });
     rows.push({ id: 'afos-native-http-caller-proof', name: require.resolve('workdsh-provider-enterprise-profile/native-ws-http-admission') });
     rows.push({ id: 'afos-owned-original-native-mux', name: require.resolve('@deepseek-ai/cordis-plugin-group'), group: true,
