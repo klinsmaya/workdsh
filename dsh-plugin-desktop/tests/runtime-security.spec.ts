@@ -42,19 +42,23 @@ describe('desktop runtime boundaries', () => {
     expect(child.signalCode).toBe('SIGKILL')
   })
   it.skipIf(process.platform !== 'linux')('terminates a tracked real detached tool when its Host ignores shutdown', async () => {
-    const script = "const {spawn}=require('node:child_process'); process.on('SIGTERM',()=>{}); const tool=spawn(process.execPath,['-e',\"process.on('SIGTERM',()=>{}); console.log(process.pid); setInterval(()=>{},1000)\"],{detached:true,stdio:['ignore','pipe','ignore']}); tool.stdout.once('data',b=>console.log(b.toString().trim())); setInterval(()=>{},1000)"
-    const host = spawn(process.execPath,['-e',script],{detached:true,stdio:['ignore','pipe','ignore']})
-    const toolPid = await new Promise<number>(resolve => host.stdout?.once('data',bytes => resolve(Number(bytes.toString().trim()))))
-    try {
-      await stopRuntimeTree(host,30)
-      const {readFile} = await import('node:fs/promises')
-      // A killed orphan may briefly remain as a zombie until init reaps it.
-      let live=false
-      try { live=!/\) Z /u.test(await readFile(`/proc/${toolPid}/stat`,'utf8')) } catch { /* reaped */ }
-      expect(live).toBe(false)
-    } finally {
-      try { process.kill(-toolPid,'SIGKILL') } catch { /* already stopped */ }
-      if (host.exitCode === null && host.signalCode === null) { try { process.kill(-host.pid!,'SIGKILL') } catch { /* already stopped */ } }
+    // Exercise separate real groups repeatedly: signal delivery must not be
+    // mistaken for confirmed termination of a tracked detached descendant.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const script = "const {spawn}=require('node:child_process'); process.on('SIGTERM',()=>{}); const tool=spawn(process.execPath,['-e',\"process.on('SIGTERM',()=>{}); console.log(process.pid); setInterval(()=>{},1000)\"],{detached:true,stdio:['ignore','pipe','ignore']}); tool.stdout.once('data',b=>console.log(b.toString().trim())); setInterval(()=>{},1000)"
+      const host = spawn(process.execPath,['-e',script],{detached:true,stdio:['ignore','pipe','ignore']})
+      const toolPid = await new Promise<number>(resolve => host.stdout?.once('data',bytes => resolve(Number(bytes.toString().trim()))))
+      try {
+        await stopRuntimeTree(host,30)
+        const {readFile} = await import('node:fs/promises')
+        // A killed orphan may briefly remain as a zombie until init reaps it.
+        let live=false
+        try { live=!/\) Z /u.test(await readFile(`/proc/${toolPid}/stat`,'utf8')) } catch { /* reaped */ }
+        expect(live).toBe(false)
+      } finally {
+        try { process.kill(-toolPid,'SIGKILL') } catch { /* already stopped */ }
+        if (host.exitCode === null && host.signalCode === null) { try { process.kill(-host.pid!,'SIGKILL') } catch { /* already stopped */ } }
+      }
     }
   })
 })

@@ -74,15 +74,21 @@ export function isRuntimeDownload(target: string, runtimeUrl: string): boolean {
   } catch { return false }
 }
 
-interface LinuxProcess { readonly pid: number; readonly parent: number; readonly group: number; readonly started: string }
-async function linuxProcess(pid: number): Promise<LinuxProcess | undefined> {
+interface LinuxProcess { readonly pid: number; readonly parent: number; readonly group: number; readonly started: string; readonly state: string }
+async function linuxProcess(pid: number, required = false): Promise<LinuxProcess | undefined> {
   try {
     const stat = await readFile(`/proc/${pid}/stat`, 'utf8')
     const fields = stat.slice(stat.lastIndexOf(') ') + 2).trim().split(/\s+/u)
-    const parent = Number(fields[1]); const group = Number(fields[2]); const started = fields[19]
-    if (!Number.isSafeInteger(parent) || !Number.isSafeInteger(group) || !started) return undefined
-    return {pid,parent,group,started}
-  } catch { return undefined }
+    const parent = Number(fields[1]); const group = Number(fields[2]); const started = fields[19]; const state = fields[0]
+    if (!Number.isSafeInteger(parent) || !Number.isSafeInteger(group) || !started || !/^\d+$/u.test(started) || state?.length !== 1) {
+      if (required) throw new Error('Runtime tree stop could not be confirmed')
+      return undefined
+    }
+    return {pid,parent,group,started,state}
+  } catch (error) {
+    if (required && !(error instanceof Error && 'code' in error && ['ENOENT','ESRCH'].includes(String(error.code)))) throw error
+    return undefined
+  }
 }
 async function linuxDescendants(known: Map<number, LinuxProcess>, root: number): Promise<void> {
   const entries = await readdir('/proc')
@@ -90,7 +96,7 @@ async function linuxDescendants(known: Map<number, LinuxProcess>, root: number):
   const current = new Map(rows.filter((row): row is LinuxProcess => row !== undefined).map(row => [row.pid,row]))
   const parents = new Set<number>()
   const host = current.get(root)
-  if (host && (!known.has(root) || known.get(root)?.started === host.started)) { known.set(root,host); parents.add(root) }
+  if (host && known.get(root)?.started === host.started) { known.set(root,host); parents.add(root) }
   for (const [pid,row] of known) if (current.get(pid)?.started === row.started) parents.add(pid)
   let changed = true
   while (changed) {
@@ -100,15 +106,53 @@ async function linuxDescendants(known: Map<number, LinuxProcess>, root: number):
     }
   }
 }
+
+async function signalOwnedLinuxGroup(known: Map<number, LinuxProcess>, group: number, signal: NodeJS.Signals): Promise<void> {
+  const leader = await linuxProcess(group, true)
+  const capturedLeader = known.get(group)
+  if (leader && (!capturedLeader || leader.started !== capturedLeader.started)) throw new Error('Runtime tree ownership could not be confirmed')
+  for (const row of known.values()) {
+    const current = await linuxProcess(row.pid, true)
+    if (current && current.started === row.started && current.group === group) {
+      try { process.kill(-group, signal) } catch (error) {
+        if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) throw error
+      }
+      return
+    }
+  }
+  // Without a surviving captured member the group cannot be attributed to this
+  // ChildProcess. Check for live members, but never signal a newly adopted group.
+  const entries = await readdir('/proc')
+  for (const entry of entries) {
+    if (!/^\d+$/u.test(entry)) continue
+    const row = await linuxProcess(Number(entry), true)
+    if (row?.group === group && !['Z','X','x'].includes(row.state)) throw new Error('Runtime tree ownership could not be confirmed')
+  }
+}
 async function stopKnownLinuxProcesses(known: Map<number, LinuxProcess>): Promise<void> {
   // Detached official subprocesses have a separate group. Keep start identities
   // from before Host exit; do not send a signal to a subsequently reused PID.
   for (const row of [...known.values()].reverse()) {
-    const current = await linuxProcess(row.pid)
+    const current = await linuxProcess(row.pid, true)
     if (!current || current.started !== row.started) continue
     try { process.kill(row.pid,'SIGKILL') } catch (error) {
       if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) throw error
     }
+  }
+}
+
+async function confirmKnownLinuxProcessesStopped(known: Map<number, LinuxProcess>): Promise<void> {
+  // Sending SIGKILL does not acknowledge termination. Recheck the captured start
+  // identity; a zombie no longer executes, and a reused PID is not our process.
+  const deadline = performance.now() + 1_000
+  while (true) {
+    const remaining = await Promise.all([...known.values()].map(async row => {
+      const current = await linuxProcess(row.pid, true)
+      return current && current.started === row.started && current.state !== 'Z' && current.state !== 'X' && current.state !== 'x'
+    }))
+    if (!remaining.some(Boolean)) return
+    if (performance.now() >= deadline) throw new Error('Runtime tree stop could not be confirmed')
+    await new Promise<void>(resolve => setTimeout(resolve, 20))
   }
 }
 
@@ -117,7 +161,14 @@ export async function stopRuntimeTree(child: ChildProcess, graceMs = 10_000): Pr
   if (!child.pid) return
   const pid = child.pid
   const linuxProcesses = new Map<number,LinuxProcess>()
-  if (process.platform === 'linux') await linuxDescendants(linuxProcesses,pid)
+  if (process.platform === 'linux') {
+    // An already exited ChildProcess cannot establish ownership from its old PID.
+    if (child.exitCode === null && child.signalCode === null) {
+      const host = await linuxProcess(pid, true)
+      if (host && child.exitCode === null && child.signalCode === null) linuxProcesses.set(pid, host)
+    }
+    await linuxDescendants(linuxProcesses,pid)
+  }
   const exited = child.exitCode !== null || child.signalCode !== null ? Promise.resolve() : new Promise<void>(resolve => child.once('exit', () => resolve()))
   let timer: ReturnType<typeof setTimeout> | undefined
   const deadline = new Promise<'timeout'>(resolve => { timer = setTimeout(() => resolve('timeout'), graceMs) })
@@ -132,8 +183,10 @@ export async function stopRuntimeTree(child: ChildProcess, graceMs = 10_000): Pr
         closer.once('exit', code => resolve(code === 0))
       })
     }
+    else if (process.platform === 'linux') await signalOwnedLinuxGroup(linuxProcesses, pid, 'SIGTERM')
     else process.kill(-pid, 'SIGTERM')
   } catch (error) {
+    if (timer) clearTimeout(timer)
     if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) throw error
   }
   const result = await Promise.race([exited, deadline])
@@ -151,9 +204,11 @@ export async function stopRuntimeTree(child: ChildProcess, graceMs = 10_000): Pr
       await linuxDescendants(linuxProcesses,pid)
       await stopKnownLinuxProcesses(linuxProcesses)
     }
-    try { process.kill(-pid, 'SIGKILL') } catch (error) {
+    if (process.platform === 'linux') await signalOwnedLinuxGroup(linuxProcesses, pid, 'SIGKILL')
+    else try { process.kill(-pid, 'SIGKILL') } catch (error) {
       if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) throw error
     }
+    if (process.platform === 'linux') await confirmKnownLinuxProcessesStopped(linuxProcesses)
   }
   if (result === 'timeout') await exited
 }
