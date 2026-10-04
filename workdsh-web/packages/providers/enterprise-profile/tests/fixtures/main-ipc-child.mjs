@@ -8,6 +8,12 @@ output({ready:true,pid:process.pid,subject:channel.authority.binding.subject});
 for await (const line of createInterface({input:process.stdin})) {
  const cmd=JSON.parse(line);let result;
  try {
+  if(cmd.op==='startup-ready'){result=await channel.publishCoreReady().then(()=>({resolved:true}),e=>({code:e.message}));}
+  if(cmd.op==='startup-ready-parallel'){result=(await Promise.allSettled([channel.publishCoreReady(),channel.publishCoreReady()])).map(v=>({status:v.status,code:v.reason?.message}));}
+  if(cmd.op==='startup-ready-extra'||cmd.op==='startup-ready-stale'){
+    await endpoint.send({contractVersion:'afos.main-ipc.v1',kind:'request',generation:cmd.op==='startup-ready-stale'?'old-generation':wireGeneration,callId:1,method:'startup.ready',args:cmd.op==='startup-ready-extra'?{actor:'forged'}:{}});
+    await new Promise(resolve=>setTimeout(resolve,30));result=await channel.publishCoreReady().then(()=>({resolved:true}),e=>({code:e.message}));
+  }
   if(cmd.op==='lease'||cmd.op==='lease-no-release') {const lease=await channel.business.prepareSessionBinding('run-1','session-1',channel.signal);lease.commit();let gated=false;try{lease.assertReady();}catch{gated=true;}
     let ack,code;try{await lease.acknowledge(channel.signal);lease.assertReady();ack=true;}catch(e){ack=false;code=e.message;}let releaseCode;if(cmd.op!=='lease-no-release')try{await lease.release(channel.signal);}catch(e){releaseCode=e.message;}result={gated,ack,code,...(releaseCode?{releaseCode}:{})};}
   if(cmd.op==='two-pending'){result=await Promise.allSettled([channel.business.currentAuthority(channel.signal),channel.business.currentAuthority(channel.signal)]).then(values=>values.map(v=>({status:v.status,code:v.reason?.message})));}

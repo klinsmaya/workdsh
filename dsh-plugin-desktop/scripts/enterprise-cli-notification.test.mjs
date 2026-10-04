@@ -41,6 +41,6 @@ test('original CLI natural process exit after public appReady emits once; only t
   await symlink(dirname(require.resolve('@deepseek-ai/dsh/package.json')), join(modules, '@deepseek-ai', 'dsh'), 'dir');
   const plugin = join(directory, 'exit-fixture.mjs'); await writeFile(plugin, "export const name='afos-test-natural-exit';export const inject=['appReady'];export function apply(ctx){ctx.effect(()=>ctx.appReady.onReady(()=>{const timer=setTimeout(()=>process.exit(0),200);return()=>clearTimeout(timer);}));}\n");
   await writeFile(join(provider, 'cli-profile.mjs'), `import {managedCliProfilePatch as original} from ${JSON.stringify(pathToFileURL(cliModule).href)};export function managedCliProfilePatch(options){const patch=original(options);patch[0].insert[0].config.push({id:'afos-test-natural-exit',name:${JSON.stringify(pathToFileURL(plugin).href)}});return patch;}\n`);
-  await writeFile(join(provider, 'main-ipc.mjs'), `export {attachMainBusinessIpc} from ${JSON.stringify(pathToFileURL(ipcModule).href)};\n`);
+  await writeFile(join(provider, 'main-ipc.mjs'), `export {attachMainBusinessIpc,CORE_READY_IPC_VERSION} from ${JSON.stringify(pathToFileURL(ipcModule).href)};\n`);
   const f = await composed(t, { runtimeProfile: runtime }); await f.main.startHost(); await wait(() => f.owner.processId() === undefined); assert.deepEqual(f.notifications, ['unexpected']);
 });

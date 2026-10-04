@@ -20,7 +20,10 @@ export interface MainIpcEndpoint {
 }
 export interface MainIpcBootstrap { readonly root: string; readonly model: ModelPolicy; readonly nativeCaller?: true; readonly online?: MainCliOnlineBootstrap }
 export type { MainCliOnlineOwner, MainCliReady } from './main-cli-ready.js';
+/** Paired Carrier/Profile readiness capability; never fall back to log parsing. */
+export const CORE_READY_IPC_VERSION = 1;
 const METHODS = {
+  'startup.ready': [],
   'caller.admit': ['request'], 'caller.assert': ['leaseId'], 'caller.release': ['leaseId'],
   'authority.current': [], 'state.refresh': [], 'materials.list': [],
   'material.read': ['ref'], 'run.authorize': ['refs','operationId'], 'run.release': ['runId'],
@@ -79,7 +82,7 @@ function safeCode(error:unknown):string {
 interface ParentStream { readonly iterator:AsyncIterator<Uint8Array>; readonly abort:AbortController; busy:boolean; bytes:number; remainder:Uint8Array; }
 /** Main retains credentials, leases, durable drafts and current authority. Requires a real captured Host signal. */
 export async function attachMainBusinessIpc(endpoint:MainIpcEndpoint,business:MainBusinessCapabilities,
-  startSignal:AbortSignal,bootstrap:MainIpcBootstrap,callerIssuer?:NativeCallerIssuer,onlineOwner?:MainCliOnlineOwner):Promise<{readonly generation:string; close():Promise<void>}> {
+  startSignal:AbortSignal,bootstrap:MainIpcBootstrap,callerIssuer?:NativeCallerIssuer,onlineOwner?:MainCliOnlineOwner,onCoreReady?:()=>void):Promise<{readonly generation:string; close():Promise<void>}> {
   if(!(business.hostSignal instanceof AbortSignal)||!isAbsolute(bootstrap.root))denied();
   const model=policy(bootstrap.model),generation=randomUUID(),lifetime=new AbortController();
   const online=onlineOwner?onlineBootstrap({frontendIndex:onlineOwner.frontendIndex,nonce:randomUUID()}):undefined;
@@ -87,7 +90,7 @@ export async function attachMainBusinessIpc(endpoint:MainIpcEndpoint,business:Ma
   const signal=AbortSignal.any([startSignal,business.hostSignal,lifetime.signal]); signal.throwIfAborted();
   const leases=new Map<string,{lease:MainSessionBindingLease;runId:string;sessionId:string;expiresAt:string;committed:boolean;timer:ReturnType<typeof setTimeout>}>();
   const streams=new Map<string,ParentStream>(),pending=new Map<number,AbortController>();
-  let revision=0,lastCall=0,hello=false,ready=false,closed=false,writeTail:Promise<unknown>=Promise.resolve();
+  let revision=0,lastCall=0,hello=false,ready=false,coreReady=false,closed=false,writeTail:Promise<unknown>=Promise.resolve();
   const assert=()=>{if(closed||signal.aborted)throw new MainIpcError('afos/main-ipc-cutoff');};
   const currentSnapshot=():MainSnapshot=>{const local=business.localState();return snapshot({revision:++revision,local:{project:{id:local.project.id,name:local.project.name},authority:local.authority,lastSyncAt:local.lastSyncAt},drafts:business.drafts().map(draftDto)});};
   const send=async(message:object)=>{assert();boundedJson(message);await endpoint.send(message);assert();};
@@ -113,6 +116,11 @@ export async function attachMainBusinessIpc(endpoint:MainIpcEndpoint,business:Ma
     }
     const grant=await business.currentAuthority(caller);assert();caller.throwIfAborted();
     if(Date.parse(grant.expiresAt)<=Date.now())denied();
+    if(name==='startup.ready'){
+      authority(grant);
+      if(coreReady)denied();
+      coreReady=true;onCoreReady?.();assert();return null;
+    }
     if(name==='authority.current')return authority(grant);
     if(name==='state.refresh')return null;
     if(name==='materials.list')return (await business.materials(caller)).map(v=>({ ...source({materialId:v.materialId,revisionId:v.revisionId,sha256:v.sha256}),name:text(v.name,2048) }));
@@ -227,7 +235,7 @@ export async function attachMainBusinessIpc(endpoint:MainIpcEndpoint,business:Ma
 interface Pending { readonly name:Method; readonly resolve:(value:unknown)=>void; readonly reject:(error:MainIpcError)=>void; readonly release:()=>void; }
 /** Child proxy exposes only fixed business operations; it never receives an OAuth/provider credential. */
 export async function connectMainBusinessIpc(endpoint:MainIpcEndpoint,startSignal:AbortSignal):Promise<{
-  readonly business:MainBusinessCapabilities;readonly nativeCaller:NativeCallerProof;readonly bootstrap:MainIpcBootstrap;readonly authority:GatewayAuthoritySnapshot;readonly signal:AbortSignal;publishReady(ready:MainCliReady):Promise<void>;close():void;
+  readonly business:MainBusinessCapabilities;readonly nativeCaller:NativeCallerProof;readonly bootstrap:MainIpcBootstrap;readonly authority:GatewayAuthoritySnapshot;readonly signal:AbortSignal;publishCoreReady():Promise<void>;publishReady(ready:MainCliReady):Promise<void>;close():void;
 }> {
   const lifetime=new AbortController(),signal=AbortSignal.any([startSignal,lifetime.signal]),epoch=Object.freeze({});
   let generation:string|undefined,current:MainSnapshot|undefined,sequence=0,closed=false;
@@ -360,5 +368,6 @@ export async function connectMainBusinessIpc(endpoint:MainIpcEndpoint,startSigna
     const ready=cliReady(value);published=true;
     try{await endpoint.send({contractVersion:IPC_VERSION,kind:'ready',generation,nonce:online.nonce,ready});assert();}catch{close();throw new MainIpcError('afos/main-ipc-cutoff');}
   };
-  return Object.freeze({business:Object.freeze(business),nativeCaller:callers.proof,bootstrap:initialized.bootstrap,authority:initialized.authority,signal,publishReady,close});
+  const publishCoreReady=async():Promise<void>=>{if(await call('startup.ready',{},signal)!==null)denied();};
+  return Object.freeze({business:Object.freeze(business),nativeCaller:callers.proof,bootstrap:initialized.bootstrap,authority:initialized.authority,signal,publishCoreReady,publishReady,close});
 }

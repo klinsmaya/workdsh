@@ -46,14 +46,14 @@ async function composed(t,{core=false,failAck=false,dropAck=false,wake=false,mod
   const owned=child;childClosed=once(owned,'close');childClosed.catch(()=>undefined);let stdout='',stderr='';owned.stdout.on('data',v=>stdout+=v);owned.stderr.on('data',v=>stderr+=v);
   const received=[],waiting=[],lines=createInterface({input:owned.stdout});let readyResolve,readyReject;
   const appReady=new Promise((resolve,reject)=>{readyResolve=resolve;readyReject=reject;});
-  lines.on('line',line=>{if(line==='AFOS_CLI_READY v1')readyResolve();
+  lines.on('line',line=>{
    if(line.startsWith('AFOS_OBSERVATION ')){const value=JSON.parse(line.slice(17));assert.deepEqual(Object.keys(value),['event','created','disposed','wakes','toolCalls','agents']);assert.ok(['ready','agent/created','agent/disposed','creation-wake','tool/call','process/exit'].includes(value.event));for(const name of ['created','disposed','wakes','toolCalls','agents'])assert.ok(Number.isSafeInteger(value[name])&&value[name]>=0&&value[name]<=100000);observations.push(value);console.log('AFOS_CLI_OBSERVATION '+JSON.stringify(value));return;}
    if(!line.startsWith('AFOS_RESULT '))return;const value=JSON.parse(line.slice(12));if(waiting.length)waiting.shift().resolve(value);else received.push(value);});
   const refuse=()=>{readyReject(Error('original-cli-not-ready'));for(const entry of waiting.splice(0))entry.reject(Error(`original CLI exited: ${stdout}\n${stderr}`));};owned.once('error',refuse);owned.once('exit',refuse);appReady.catch(()=>undefined);
   next=()=>received.length?Promise.resolve(received.shift()):new Promise((resolve,reject)=>waiting.push({resolve,reject}));
   const real={...business,prepareSessionBinding:async(...args)=>{const lease=await business.prepareSessionBinding(...args);leases.prepared++;return{commit(){if(failAck)throw Error('fixture-private-ack-error');lease.commit();leases.committed++;},dispose(){lease.dispose();leases.disposed++;}};}};
   const endpoint={send:message=>{wire.push(message);if(dropAck&&message.kind==='reply'&&message.method==='publication.ack'&&message.ok)return Promise.resolve();return new Promise((resolve,reject)=>owned.send(message,error=>error?reject(error):resolve()));},messages:listener=>{const accept=value=>{wire.push(value);listener(value);};owned.on('message',accept);return()=>owned.off('message',accept);},disconnected:listener=>{owned.on('disconnect',listener);return()=>owned.off('disconnect',listener);}};
-  channel=await attachMainBusinessIpc(endpoint,real,signal,{root:layout.profile,model:policy});
+  channel=await attachMainBusinessIpc(endpoint,real,signal,{root:layout.profile,model:policy},undefined,undefined,()=>readyResolve());
   const value=await next();assert.equal(value.ready,true,JSON.stringify(value));assert.equal(value.originalLoader,true,JSON.stringify(value));assert.equal(value.rootPrivate,true,JSON.stringify(value));assert.equal(value.identity,_authority.binding.subject);assert.notEqual(value.pid,process.pid);assert.equal(value.ppid,process.pid);assert.equal(value.materials[0].materialId,'m1');
   if(core)await appReady;
   console.log('AFOS_CLI_EVIDENCE '+JSON.stringify({pid:value.pid,ppid:value.ppid,entryOwner:value.entryOwner,rootPrivate:value.rootPrivate,core:value.core??false}));

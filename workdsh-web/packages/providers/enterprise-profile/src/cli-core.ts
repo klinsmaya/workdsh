@@ -21,10 +21,13 @@ export function apply(ctx:Context):void {
  if(!launcher||typeof launcher.onReady!=='function'||typeof exit!=='function')throw new EnterpriseProfileError('afos/cli-core-not-ready');
  ctx.effect(()=>launcher.onReady(()=>{
   if(ready.signal.aborted)return;
-  if(ready.online){
-   const server=ctx.webServer;
-   void ready.online.publishReady({host:'127.0.0.1',port:server.port,authenticatedUrl:ctx.connection.authenticatedUrl(`http://127.0.0.1:${server.port}/`)}).catch(()=>exit(1));
-  }
-  process.stdout.write('AFOS_CLI_READY v1\n');
+  // Control never shares stdout with diagnostic producers or partial log lines.
+  void(async()=>{
+   await ready.publishCoreReady();ready.signal.throwIfAborted();
+   if(ready.online){
+    const server=ctx.webServer;
+    await ready.online.publishReady({host:'127.0.0.1',port:server.port,authenticatedUrl:ctx.connection.authenticatedUrl(`http://127.0.0.1:${server.port}/`)});
+   }
+  })().catch(()=>exit(1));
  }), 'afos-original-cli-ready');
 }

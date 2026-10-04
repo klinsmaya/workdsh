@@ -40,7 +40,7 @@
   "scripts": {
     "build": "node scripts/generate-windows-app-icon.mjs && node scripts/generate-mac-app-icon.mjs && node scripts/generate-tray-icons.mjs && node scripts/clean.mjs && tsdown && node scripts/build-enterprise-renderer.mjs && node scripts/build-enterprise-renderer.mjs --online && tsc -p tsconfig.json --emitDeclarationOnly",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.tests.json --noEmit",
-    "test": "vitest run && node --test scripts/verify-profile-release.test.mjs && node --experimental-transform-types --test scripts/enterprise-local-carrier.test.mjs scripts/enterprise-local-main.test.mjs scripts/enterprise-cli-notification.test.mjs",
+    "test": "vitest run && node --test scripts/verify-profile-release.test.mjs && node --experimental-transform-types --test scripts/enterprise-local-carrier.test.mjs scripts/enterprise-local-main.test.mjs scripts/enterprise-cli-notification.test.mjs scripts/enterprise-cli-log-boundary.test.mjs",
     "test:auth-loopback": "node --experimental-transform-types scripts/desktop-auth-loopback-contract.test.mjs",
     "check": "yarn run build && yarn run typecheck && yarn run test",
     "check:win-package": "yarn run check",

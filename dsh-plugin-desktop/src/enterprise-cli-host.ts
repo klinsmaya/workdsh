@@ -24,9 +24,10 @@ interface PublicProfileExports {
   managedCliProfilePatch(options: { root: string; binding: CurrentAuthoritySnapshot['binding']; model: ModelPolicy; signal: AbortSignal; nativeCaller?: true; frontendIndex?: string }): unknown
 }
 interface PublicIpcExports {
+  readonly CORE_READY_IPC_VERSION: 1
   attachMainBusinessIpc(endpoint: Endpoint, business: EnterpriseHostBusinessCapabilities, signal: AbortSignal,
     bootstrap: { root: string; model: ModelPolicy }, callerIssuer?: EnterpriseCallerIssuer,
-    online?: { frontendIndex: string; onReady(ready: Omit<EnterpriseCliReady, 'signal'>): void }): Promise<Attachment>
+    online?: { frontendIndex: string; onReady(ready: Omit<EnterpriseCliReady, 'signal'>): void }, onCoreReady?: () => void): Promise<Attachment>
 }
 /** Main-only trusted runtime/configuration, never a Renderer DTO or plugin selector. */
 export interface EnterpriseCliHostOptions {
@@ -147,7 +148,8 @@ export class EnterpriseCliHost implements EnterpriseHostLifecycle {
       const profileModule: PublicProfileExports = await within(import(pathToFileURL(require.resolve('workdsh-provider-enterprise-profile/cli-profile')).href), signal)
       const ipcModule: PublicIpcExports = await within(import(pathToFileURL(require.resolve('workdsh-provider-enterprise-profile/main-ipc')).href), signal)
       signal.throwIfAborted()
-      if (typeof profileModule.managedCliProfilePatch !== 'function' || typeof ipcModule.attachMainBusinessIpc !== 'function') refused()
+      if (typeof profileModule.managedCliProfilePatch !== 'function' || typeof ipcModule.attachMainBusinessIpc !== 'function'
+        || ipcModule.CORE_READY_IPC_VERSION !== 1) refused()
       owned.home = await within(mkdtemp(join(layout.cache, 'cli-')), signal,
         async home => { if (home) await rm(home, { recursive: true, force: true }) }); signal.throwIfAborted()
       await within(privateDirectory(owned.home), signal); signal.throwIfAborted()
@@ -164,7 +166,7 @@ export class EnterpriseCliHost implements EnterpriseHostLifecycle {
       await within(writeFile(join(profile, 'cordis.patch.yml'), encoded + '\n', { flag: 'wx', mode: 0o600 }), signal, removeAbandonedHome); signal.throwIfAborted()
       await within(symlink(join(this.options.runtimeProfile, 'node_modules'), join(profile, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir'), signal, removeAbandonedHome); signal.throwIfAborted()
       const ready = Promise.withResolvers<void>(); let sawWelcome = false
-      let onlineReady: Omit<EnterpriseCliReady, 'signal'> | undefined
+      let coreReady = false, onlineReady: Omit<EnterpriseCliReady, 'signal'> | undefined
       const child = spawn(this.options.executable, [cli, '--profile', 'afos-managed'], {
         cwd: owned.home, env: managedEnvironment(owned.home),
         stdio: ['ignore', 'pipe', 'pipe', 'ipc'], serialization: 'json', windowsHide: true, detached: process.platform !== 'win32',
@@ -181,10 +183,7 @@ export class EnterpriseCliHost implements EnterpriseHostLifecycle {
       child.once('error', failReady); child.once('exit', () => { unexpected(); failReady() })
       child.once('disconnect', () => { unexpected(); failReady(); cutoff() })
       const readyCutoff = () => failReady(); signal.addEventListener('abort', readyCutoff, { once: true })
-      const output = new RuntimeLogFilter(text => {
-        if (text === 'AFOS_CLI_READY v1\n') { if (!this.options.online) ready.resolve(); return }
-        this.options.writeLog?.(text)
-      }), errors = new RuntimeLogFilter(text => this.options.writeLog?.(text))
+      const output = new RuntimeLogFilter(text => this.options.writeLog?.(text)), errors = new RuntimeLogFilter(text => this.options.writeLog?.(text))
       child.stdout?.on('data', value => output.consume(value)); child.stderr?.on('data', value => errors.consume(value))
       child.once('exit', () => { output.flush(); errors.flush() })
       const endpoint: Endpoint = {
@@ -199,7 +198,8 @@ export class EnterpriseCliHost implements EnterpriseHostLifecycle {
       }
       try {
         owned.attachment = await within(ipcModule.attachMainBusinessIpc(endpoint, business, signal, { root: layout.profile, model: this.options.model }, this.options.callerIssuer,
-          this.options.online ? { frontendIndex: this.options.online.frontendIndex, onReady: value => { if (!signal.aborted) { onlineReady = value; ready.resolve() } } } : undefined), signal,
+          this.options.online ? { frontendIndex: this.options.online.frontendIndex, onReady: value => { if (!signal.aborted) { onlineReady = value; if (coreReady) ready.resolve() } } } : undefined,
+          () => { if (!signal.aborted) { coreReady = true; if (!this.options.online || onlineReady) ready.resolve() } }), signal,
           async attachment => { await attachment?.close() })
         signal.throwIfAborted(); await within(ready.promise, signal); signal.throwIfAborted()
         if (!sawWelcome || !child.connected || child.exitCode !== null || child.signalCode !== null) refused()

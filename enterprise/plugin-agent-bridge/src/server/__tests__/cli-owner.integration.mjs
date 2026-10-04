@@ -58,7 +58,6 @@ async function composed(t) {
     const cap = b => { observedBytes += b.length; if (observedBytes > 262144) current.kill('SIGKILL'); };
     current.stdout.on('data', cap); current.stderr.on('data', cap); // Do not persist private ready/cookie frames.
     createInterface({ input: current.stdout }).on('line', line => {
-      if (line === 'AFOS_CLI_READY v1') app.resolve();
       if (line.startsWith('AFOS_OWNER_READY ')) first.resolve(JSON.parse(line.slice(17)));
       if (line.startsWith('AFOS_OWNER_RESULT ')) {
         const result = JSON.parse(line.slice(18)), wait = pending.get(result.id);
@@ -81,7 +80,7 @@ async function composed(t) {
       catch (error) { mainReadDenials.push({ id, code: error.code }); throw error; }
     } };
     channel = await attachMainBusinessIpc(endpoint, observedBusiness, signal, { root: profileRoot, model: policy },
-      { assertRequest: (request, s) => { if (!issuer) throw Error('caller issuer not bound'); return issuer.assertRequest(request, s); } });
+      { assertRequest: (request, s) => { if (!issuer) throw Error('caller issuer not bound'); return issuer.assertRequest(request, s); } }, undefined, () => app.resolve());
     ready = await bounded(first.promise, 'Original CLI owner ready'); await bounded(app.promise, 'Original CLI app ready');
     assert.equal(ready.ppid, process.pid); assert.notEqual(ready.pid, process.pid);
     assert.equal(ready.pid, current.pid); assert.equal(ready.root, profileRoot);

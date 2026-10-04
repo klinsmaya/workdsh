@@ -10,16 +10,44 @@ async function fixture(t,{failAck=false,corrupt,block=false,grantTTL=60000,runTT
  const lines=createInterface({input:child.stdout}),received=[],waiting=[];let stderr='';child.stderr.on('data',v=>stderr+=v);
  lines.on('line',line=>{const value=JSON.parse(line);if(waiting.length)waiting.shift()(value);else received.push(value);});
  const next=()=>received.length?Promise.resolve(received.shift()):new Promise(resolve=>waiting.push(resolve));
- const host=new AbortController(),start=new AbortController(),stats={commits:0,disposes:0,fresh:0,cancelled:0,modelAborts:0,cutoffs:0,modelFactories:0,renewals:0};
+ const host=new AbortController(),start=new AbortController(),stats={commits:0,disposes:0,fresh:0,cancelled:0,modelAborts:0,cutoffs:0,modelFactories:0,renewals:0,coreReady:0};
  // A server Run has one absolute expiry; reading it must never extend its lifetime.
  let runExpiresAt;
  const business={hostSignal:host.signal,sessionRun:async()=>{if(ackReadFailure&&stats.commits)throw new Error('private-post-commit-recheck-failure');if(gateOpen)await new Promise(resolve=>setTimeout(resolve,50));return {runId:'run-1',attempt:1,projectId:'project-1',releaseId:'release-1',policyRevision:'policy-1',inputRefs:[],binding:authority().binding,expiresAt:runExpiresAt??new Date(Date.now()+runTTL).toISOString()};},modelBytes:(_session,_request,signal)=>{stats.modelFactories++;return (async function*(){if(modelBlocked)await new Promise((resolve,reject)=>signal.addEventListener('abort',()=>{stats.modelAborts++;reject(new Error('private-model-source-error'));},{once:true}));else yield new Uint8Array(modelChunkBytes||1).fill(7);})();},currentAuthority:async signal=>{stats.fresh++;if(block&&stats.fresh>1)await new Promise((resolve,reject)=>{signal.addEventListener('abort',()=>{stats.cancelled++;if(block!=='noncooperative')reject(new Error('fixture-secret-must-not-cross'));},{once:true});});return {...authority(),expiresAt:new Date(Date.now()+grantTTL).toISOString()};},localState:()=>({project:{id:'project-1',name:'Project'},authority:'current',lastSyncAt:new Date().toISOString()}),drafts:()=>[],prepareSessionBinding:async()=>{runExpiresAt??=new Date(Date.now()+runTTL).toISOString();return {commit(){if(failAck)throw new Error('fixture-secret-ack-failure');stats.commits++;},dispose(){stats.disposes++;}};}};
  const endpoint={send:message=>{if(message.kind==='cutoff')stats.cutoffs++;return new Promise((resolve,reject)=>child.send(corrupt?.(message)??message,error=>error?reject(error):resolve()));},messages:listener=>{const wrapped=message=>{if(message.kind==='request'&&message.method==='publication.renew')stats.renewals++;listener(message);};child.on('message',wrapped);return()=>child.off('message',wrapped);},disconnected:listener=>{child.on('disconnect',listener);return()=>child.off('disconnect',listener);}};
- const channel=await attachMainBusinessIpc(endpoint,business,start.signal,{root:'/tmp/afos-private-profile-fixture',model:{provider:'managed',model:'fixed',maxTokens:100}});
+ const channel=await attachMainBusinessIpc(endpoint,business,start.signal,{root:'/tmp/afos-private-profile-fixture',model:{provider:'managed',model:'fixed',maxTokens:100}},undefined,undefined,()=>{stats.coreReady++;});
  t.after(async()=>{await channel.close();child.kill();if(child.exitCode===null&&child.signalCode===null)await once(child,'exit');assert.equal(stderr,'');});
  const ready=await next();assert.equal(ready.ready,true);assert.notEqual(ready.pid,process.pid);assert.equal(ready.subject,'auth0|用户甲@tenant.example');
  return {child,stats,host,start,channel,business,next,command:(op,extra={})=>{child.stdin.write(JSON.stringify({op,...extra})+'\n');return next();}};
 }
+test('core startup ready uses the original private fork and fresh Main authority once',{timeout:5000},async t=>{
+ const f=await fixture(t);assert.deepEqual((await f.command('startup-ready')).result,{resolved:true});
+ assert.equal(f.stats.coreReady,1);assert.equal(f.stats.fresh,2);assert.equal(f.stats.commits,0);assert.equal(f.stats.modelFactories,0);
+ assert.equal((await f.command('startup-ready')).result.code,'afos/main-ipc-refused');assert.equal(f.stats.coreReady,1);assert.equal(f.stats.cutoffs,0);
+});
+test('concurrent core startup calls crossing authority awaits cannot publish twice',{timeout:5000},async t=>{
+ const f=await fixture(t);const original=f.business.currentAuthority;let count=0,release;
+ const gate=new Promise(resolve=>{release=resolve;});f.business.currentAuthority=async signal=>{if(++count===2)release();await gate;return original(signal);};
+ const result=(await f.command('startup-ready-parallel')).result;
+ assert.equal(result.filter(v=>v.status==='fulfilled').length,1);assert.equal(result.filter(v=>v.code==='afos/main-ipc-refused').length,1);
+ assert.equal(f.stats.coreReady,1);assert.equal(f.stats.cutoffs,0);
+});
+for(const op of ['startup-ready-extra','startup-ready-stale'])test('core ready rejects '+op+' before authority or callback',{timeout:5000},async t=>{
+ const f=await fixture(t);assert.equal((await f.command(op)).result.code,'afos/main-ipc-cutoff');
+ assert.equal(f.stats.coreReady,0);assert.equal(f.stats.fresh,1);assert.ok(f.stats.cutoffs>=1);
+});
+test('core startup cannot publish under authority expired after welcome',{timeout:5000},async t=>{
+ const f=await fixture(t);f.business.currentAuthority=async()=>({...authority(),expiresAt:new Date(Date.now()-1000).toISOString()});
+ assert.equal((await f.command('startup-ready')).result.code,'afos/main-ipc-refused');assert.equal(f.stats.coreReady,0);assert.equal(f.stats.commits,0);
+});
+test('Host abort cuts off core startup while fresh authority is pending',{timeout:5000},async t=>{
+ const f=await fixture(t,{block:true});const pending=f.command('startup-ready');
+ for(let i=0;f.stats.fresh<2&&i<100;i++)await new Promise(resolve=>setTimeout(resolve,5));assert.equal(f.stats.fresh,2);
+ f.host.abort();assert.equal((await pending).result.code,'afos/main-ipc-cutoff');assert.equal(f.stats.coreReady,0);assert.equal(f.stats.cancelled,1);assert.ok(f.stats.cutoffs>=1);
+});
+test('a closed Host cannot be readied by a later child startup call',{timeout:5000},async t=>{
+ const f=await fixture(t);f.host.abort();assert.equal((await f.command('startup-ready')).result.code,'afos/main-ipc-cutoff');assert.equal(f.stats.coreReady,0);
+});
 test('real fork local sync commit waits for Main ACK; Main owns lease commit/release',{timeout:5000},async t=>{const f=await fixture(t);const value=await f.command('lease');assert.deepEqual(value.result,{gated:true,ack:true});assert.equal(f.stats.commits,1);assert.equal(f.stats.disposes,1);
  // Hello, prepare and ACK read authority; exact-ticket release only revokes.
  assert.equal(f.stats.fresh,3);

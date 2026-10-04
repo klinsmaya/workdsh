@@ -29,12 +29,12 @@ async function composed(t,{response,model}={}){
   let stdout='',stderr='';const messages=Promise.withResolvers(),appReady=Promise.withResolvers();messages.promise.catch(()=>{});appReady.promise.catch(()=>{});
   child.stdout.on('data',b=>stdout+=b);child.stderr.on('data',b=>stderr+=b);
   createInterface({input:child.stdout}).on('line',line=>{
-   if(line.startsWith('AFOS_RESULT '))messages.resolve(JSON.parse(line.slice(12)));if(line==='AFOS_CLI_READY v1')appReady.resolve();
+   if(line.startsWith('AFOS_RESULT '))messages.resolve(JSON.parse(line.slice(12)));
    if(line.startsWith('AFOS_AT23_STATS '))try{const frame=JSON.parse(line.slice(16));pendingStats.get(frame.requestId)?.resolve(frame.value);}catch(error){for(const pending of pendingStats.values())pending.reject(error);}
   });
   child.once('exit',code=>{const e=Error('fixture CLI exit '+code+' '+stdout+' '+stderr);messages.reject(e);appReady.reject(e);for(const pending of pendingStats.values())pending.reject(e);});
   const endpoint={send:message=>{wire.push(message);return new Promise((resolve,reject)=>child.send(message,e=>e?reject(e):resolve()));},messages:listener=>{const accept=value=>{wire.push(value);listener(value);};child.on('message',accept);return()=>child.off('message',accept);},disconnected:listener=>{child.on('disconnect',listener);return()=>child.off('disconnect',listener);}};
-  channel=await attachMainBusinessIpc(endpoint,business,signal,{root:layout.profile,model:policy},{assertRequest:(request,s)=>{if(!issuer)throw Error('caller issuer not bound');return issuer.assertRequest(request,s);}});
+  channel=await attachMainBusinessIpc(endpoint,business,signal,{root:layout.profile,model:policy},{assertRequest:(request,s)=>{if(!issuer)throw Error('caller issuer not bound');return issuer.assertRequest(request,s);}},undefined,()=>appReady.resolve());
   ready=await messages.promise;await appReady.promise;assert.equal(ready.rootPrivate,true);assert.notEqual(ready.pid,process.pid);
  });await f.main.startHost();
  const account=new AbortController(),window=new AbortController(),frame={detached:false,url:'http://'+ready.authority+'/',top:null};frame.top=frame;
