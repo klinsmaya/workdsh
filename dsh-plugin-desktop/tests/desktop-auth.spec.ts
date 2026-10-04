@@ -42,6 +42,64 @@ function fixture(options: { invalidGrant?: boolean; malformed?: boolean } = {}) 
 }
 
 describe('main process OAuth', () => {
+  for (const outcome of ['success', 'invalid_grant'] as const) for (const successor of ['signed-out', 'new-account'] as const) {
+    it(`AT10 late refresh ${outcome} cannot revive tokens or disturb ${successor}`, async () => {
+      const root = await mkdtemp(join(tmpdir(), 'afos-auth-late-')); roots.push(root)
+      const vault = new RefreshTokenVault(root, { available: () => true,
+        encrypt: text => Buffer.from(text.split('').reverse().join('')), decrypt: bytes => bytes.toString().split('').reverse().join('') })
+      const alice = accountNamespace(config.issuer, 'alice', 'org1', 'device1'), bob = accountNamespace(config.issuer, 'bob', 'org1', 'device1')
+      await vault.save(alice, 'alice-seed')
+      let release: (response: Response) => void = () => undefined, entered: () => void = () => undefined, refreshes = 0
+      const waiting = new Promise<void>(resolve => { entered = resolve }), held = new Promise<Response>(resolve => { release = resolve })
+      const token = (access: string, refresh: string, expires: number) => Response.json({ access_token: access,
+        refresh_token: refresh, token_type: 'Bearer', expires_in: expires, scope: 'afos offline_access' })
+      const fetcher: typeof fetch = async (url, init) => {
+        if (String(url).endsWith('openid-configuration')) return Response.json(metadata)
+        expect(String(url)).toBe(metadata.token_endpoint)
+        const body = new URLSearchParams(String(init?.body))
+        expect(body.get('grant_type')).toBe('refresh_token'); expect(body.has('client_secret')).toBe(false)
+        if (body.get('refresh_token') === 'alice-seed') return token('alice-access', 'alice-current', 1)
+        if (body.get('refresh_token') === 'bob-seed') return token('bob-access', 'bob-current', 3600)
+        expect(body.get('refresh_token')).toBe('alice-current'); refreshes++; entered(); return held
+      }
+      const state: boolean[] = []
+      const auth: DesktopAuth = new DesktopAuth(config, async () => { throw new Error('restore must not open a browser') }, fetcher, () => state.push(auth.signedIn))
+      let pending: Promise<PromiseSettledResult<string>[]> | undefined
+      const bytes = async () => Promise.all((await readdir(root)).sort().map(async file => ({ file, bytes: await readFile(join(root, file)) })))
+      try {
+        expect(await auth.restoreRefresh(vault, alice)).toBe(true)
+        expect(await auth.persistRefresh(vault, alice)).toBe(true)
+        pending = Promise.allSettled([auth.accessToken(), auth.accessToken(), auth.accessToken()])
+        await waiting; expect(refreshes).toBe(1)
+        auth.logout(); await auth.settleCredentialWrites()
+        // Auth owns memory; explicit Main-style cleanup owns the old vault namespace.
+        await vault.clear(alice)
+        if (successor === 'new-account') {
+          await vault.save(bob, 'bob-seed'); expect(await auth.restoreRefresh(vault, bob)).toBe(true)
+          expect(await auth.persistRefresh(vault, bob)).toBe(true)
+        }
+        const before = await bytes(), observed = [...state]
+        release(outcome === 'success' ? token('late-alice-access', 'late-alice-refresh', 3600)
+          : Response.json({ error: 'invalid_grant' }, { status: 400 }))
+        const results = await pending
+        for (const result of results) {
+          expect(result.status).toBe('rejected')
+          if (result.status === 'rejected') expect(result.reason.code).toBe(outcome === 'success' ? 'auth/account-changed' : 'auth/invalid-grant')
+        }
+        expect(refreshes).toBe(1); expect(state).toEqual(observed); expect(await bytes()).toEqual(before)
+        expect(await vault.load(alice)).toBeUndefined()
+        if (successor === 'new-account') {
+          expect(auth.signedIn).toBe(true); expect(await auth.accessToken()).toBe('bob-access')
+          expect(await vault.load(bob)).toBe('bob-current')
+        } else {
+          expect(auth.signedIn).toBe(false); await expect(auth.accessToken()).rejects.toThrow('auth/sign-in-required')
+          expect(await auth.persistRefresh(vault, alice)).toBe(false)
+        }
+      } finally {
+        release(token('cleanup-access', 'cleanup-refresh', 3600)); await pending; auth.logout()
+      }
+    })
+  }
   it('uses a real one-use loopback callback, PKCE and single-flight refresh', async () => {
     const f = fixture()
     await f.auth.login()

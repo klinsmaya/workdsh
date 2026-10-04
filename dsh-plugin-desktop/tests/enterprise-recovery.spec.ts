@@ -159,6 +159,29 @@ describe('protected account storage', () => {
 })
 
 describe('official Session projection and safe rerun', () => {
+  it('AT40 first end precedes old start, duplicate end and a higher sequence from an old attempt', async () => {
+    const f = fixture(), a = f.open(), d = await create(a, { ...authorization(), attempt: 2 })
+    f.calls.length = 0
+    const end = { type: 'turn/end' as const, seq: 9, time: Date.now(), data: { turn: 1, reason: { kind: 'completed' } } }
+    expect(a.projectSessionEvent(d.draftId, d.sessionId, d.run.runId, 2, end)).toBe(true)
+    const projected = a.list(), persisted = readFileSync(statePath(a))
+    expect(projected[0]?.lastSessionSeq).toBe(9)
+    expect(projected[0]?.localExecution).toBe('completed_local')
+    expect(projected[0]?.archive).toBe('local-only')
+    expect(projected[0]?.receipt).toBeUndefined()
+    expect(f.calls).toEqual([])
+    const start = { type: 'turn/start' as const, seq: 5, time: Date.now(), data: { turn: 1 } }
+    for (const rejected of [
+      () => a.projectSessionEvent(d.draftId, d.sessionId, d.run.runId, 2, start),
+      () => a.projectSessionEvent(d.draftId, d.sessionId, d.run.runId, 2, end),
+      () => a.projectSessionEvent(d.draftId, d.sessionId, d.run.runId, 1, { ...start, seq: 20, data: { turn: 2 } }),
+    ]) {
+      expect(rejected()).toBe(false)
+      expect(a.list()).toEqual(projected)
+      expect(readFileSync(statePath(a))).toEqual(persisted)
+      expect(f.calls).toEqual([])
+    }
+  })
   it('deduplicates sequence and rejects another Session/run/attempt without changing state', async () => {
     const f = fixture(), a = f.open(), d = await create(a)
     const event = { type: 'turn/start' as const, seq: 5, time: Date.now(), data: { turn: 1 } }

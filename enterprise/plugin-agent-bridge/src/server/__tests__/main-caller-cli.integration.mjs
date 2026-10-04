@@ -16,8 +16,8 @@ const providerRoot=fileURLToPath(new URL('../../../../../workdsh-web/packages/pr
 const require=createRequire(join(providerRoot,'package.json')),cli=require.resolve('@deepseek-ai/dsh/lib/bin.js'),WebSocket=createRequire(require.resolve('@deepseek-ai/dsh-api-gateway'))('ws');
 const policy={provider:'afos-managed',model:'fixed-model',maxTokens:64};
 async function composed(t,{response,model}={}){
- let child,channel,issuer,ready,wire=[];
- const stop=async()=>{issuer?.close();await channel?.close();if(child&&child.exitCode===null&&child.signalCode===null){const exit=once(child,'exit');child.kill();await exit;}};
+ let child,channel,issuer,ready,wire=[],statsId=0;const httpTransfers=[],pendingStats=new Map();
+ const stop=async()=>{for(const pending of pendingStats.values())pending.reject(Error('fixture observer stopped'));issuer?.close();await channel?.close();if(child&&child.exitCode===null&&child.signalCode===null){const exit=once(child,'exit');child.kill();await exit;}};
  const f=await fixture({response,stopHost:stop,model:model??(async()=>[{type:'finish',reason:{kind:'stop'}}])});t.after(()=>f.cleanup());await f.ready();f.capability({ingressValidated:true,sandbox:'full'}); // Fixture switch only; production remains false/unavailable.
  f.startHook(async(signal,layout,authority,business)=>{
   const home=join(layout.cache,'caller-cli'),profile=join(home,'profiles','afos-managed');await mkdir(profile,{recursive:true,mode:0o700});
@@ -25,11 +25,14 @@ async function composed(t,{response,model}={}){
   const patch=managedCliProfilePatch({root:layout.profile,binding:authority.binding,model:policy,signal,nativeCaller:true});
   patch[0].insert[0].config.push({id:'afos-cli-caller-fixture',name:pathToFileURL(join(providerRoot,'tests/fixtures/cli-caller-consumer.mjs')).href});
   await writeFile(join(profile,'cordis.patch.yml'),JSON.stringify(patch)+'\n',{mode:0o600,flag:'wx'});await symlink(join(providerRoot,'node_modules'),join(profile,'node_modules'),'dir');
-  child=spawn(process.execPath,[cli,'--profile','afos-managed'],{cwd:home,env:{...runtimeEnvironment(process.env),DSH_HOME:home,DSH_AGENTS_HOME:join(home,'agents'),DSH_TELEMETRY_DISABLED:'1'},stdio:['ignore','pipe','pipe','ipc'],serialization:'json'});
+  child=spawn(process.execPath,[cli,'--profile','afos-managed'],{cwd:home,env:{...runtimeEnvironment(process.env),DSH_HOME:home,DSH_AGENTS_HOME:join(home,'agents'),DSH_TELEMETRY_DISABLED:'1'},stdio:['pipe','pipe','pipe','ipc'],serialization:'json'});
   let stdout='',stderr='';const messages=Promise.withResolvers(),appReady=Promise.withResolvers();messages.promise.catch(()=>{});appReady.promise.catch(()=>{});
   child.stdout.on('data',b=>stdout+=b);child.stderr.on('data',b=>stderr+=b);
-  createInterface({input:child.stdout}).on('line',line=>{if(line.startsWith('AFOS_RESULT '))messages.resolve(JSON.parse(line.slice(12)));if(line==='AFOS_CLI_READY v1')appReady.resolve();});
-  child.once('exit',code=>{const e=Error('fixture CLI exit '+code+' '+stdout+' '+stderr);messages.reject(e);appReady.reject(e);});
+  createInterface({input:child.stdout}).on('line',line=>{
+   if(line.startsWith('AFOS_RESULT '))messages.resolve(JSON.parse(line.slice(12)));if(line==='AFOS_CLI_READY v1')appReady.resolve();
+   if(line.startsWith('AFOS_AT23_STATS '))try{const frame=JSON.parse(line.slice(16));pendingStats.get(frame.requestId)?.resolve(frame.value);}catch(error){for(const pending of pendingStats.values())pending.reject(error);}
+  });
+  child.once('exit',code=>{const e=Error('fixture CLI exit '+code+' '+stdout+' '+stderr);messages.reject(e);appReady.reject(e);for(const pending of pendingStats.values())pending.reject(e);});
   const endpoint={send:message=>{wire.push(message);return new Promise((resolve,reject)=>child.send(message,e=>e?reject(e):resolve()));},messages:listener=>{const accept=value=>{wire.push(value);listener(value);};child.on('message',accept);return()=>child.off('message',accept);},disconnected:listener=>{child.on('disconnect',listener);return()=>child.off('disconnect',listener);}};
   channel=await attachMainBusinessIpc(endpoint,business,signal,{root:layout.profile,model:policy},{assertRequest:(request,s)=>{if(!issuer)throw Error('caller issuer not bound');return issuer.assertRequest(request,s);}});
   ready=await messages.promise;await appReady.promise;assert.equal(ready.rootPrivate,true);assert.notEqual(ready.pid,process.pid);
@@ -38,11 +41,59 @@ async function composed(t,{response,model}={}){
  const session={},contents={id:19,session,mainFrame:frame,isDestroyed:()=>false,getURL:()=>frame.url};
  issuer=new MainCallerProofIssuer({contents,session,partition:'afos-enterprise-ui',authority:ready.authority,uiUrl:frame.url,accountSignal:account.signal,hostSignal:f.business().hostSignal,windowSignal:window.signal});let requestId=0;
  const stamp=(path='/api/afos/drafts/state',method='POST',proofIssuer=issuer)=>proofIssuer.stampRequest({id:++requestId,url:(method==='GET'?'ws://':'http://')+ready.authority+path,method,resourceType:method==='GET'?'webSocket':'xhr',webContentsId:19,webContents:contents,frame,requestHeaders:{}})[NATIVE_WITNESS_HEADER];
- const http=async(endpoint,payload={},witness)=>fetch('http://'+ready.authority+'/api/'+endpoint,{method:'POST',headers:{cookie:ready.cookie,'content-type':'application/json',...(witness?{[NATIVE_WITNESS_HEADER]:witness}:{})},body:JSON.stringify({type:'client-request',rpcId:'caller-proof-fixture',method:endpoint,payload})});
+ const http=async(endpoint,payload={},witness)=>{const body=JSON.stringify({type:'client-request',rpcId:'caller-proof-fixture',method:endpoint,payload});httpTransfers.push({endpoint,payload:JSON.parse(body).payload});return fetch('http://'+ready.authority+'/api/'+endpoint,{method:'POST',headers:{cookie:ready.cookie,'content-type':'application/json',...(witness?{[NATIVE_WITNESS_HEADER]:witness}:{})},body});};
+ const childStats=async()=>{const requestId=++statsId;let timer;try{return await new Promise((resolve,reject)=>{
+  pendingStats.set(requestId,{resolve,reject});timer=setTimeout(()=>reject(Error('fixture observer timeout')),2000);
+  child.stdin.write(JSON.stringify({op:'at23-stats',requestId})+'\n',error=>{if(error)reject(error);});
+ });}finally{clearTimeout(timer);pendingStats.delete(requestId);}};
  const unary=async(endpoint,payload={})=>{const r=await http(endpoint,payload,stamp('/api/'+endpoint));assert.equal(r.status,200,endpoint);return (await r.json()).result;};
  const socket=async(witness)=>{const ws=new WebSocket('ws://'+ready.authority+'/api/remote.mux',{headers:{cookie:ready.cookie,...(witness?{[NATIVE_WITNESS_HEADER]:witness}:{})}});try{await Promise.race([once(ws,'open'),once(ws,'error').then(([e])=>{throw e;})]);return ws;}catch(e){ws.terminate();throw e;}};
- return {...f,ready,stamp,http,unary,socket,window,account,issuer,wire,frame};
+ return {...f,ready,stamp,http,unary,socket,window,account,issuer,wire,frame,httpTransfers,childStats};
 }
+
+test('AT23 real original CLI valid Main proof rejects extra URL command path and unregistered body action',{timeout:20000},async t=>{
+ let modelCalls=0;const f=await composed(t,{model:async()=>{modelCalls++;return [{type:'finish',reason:{kind:'stop'}}];}});
+ const effects=async()=>({tables:Object.fromEntries(Object.entries(f.tables).map(([name,table])=>[name,structuredClone([...table])])),
+  drafts:structuredClone(f.business().drafts()),child:await f.childStats(),modelCalls});
+ const initial=await effects();assert.deepEqual(initial.tables,{runs:[],uploads:[],receipts:[],artifacts:[],commitRequests:[]});
+ assert.deepEqual(initial.drafts,[]);assert.equal(initial.modelCalls,0);
+ assert.deepEqual(initial.child,{created:0,disposed:0,toolCalls:0,preExecute:0,execute:0,results:0,agents:0,sessions:0});
+ await t.test('original issuer refuses unknown path before any HTTP transfer',async()=>{
+  const before=await effects(),wireAt=f.wire.length,callsAt=f.calls.length,httpAt=f.httpTransfers.length;
+  assert.throws(()=>f.stamp('/api/afos/drafts/at23-unregistered'),{message:'enterprise/native-caller-refused'});
+  assert.equal(f.httpTransfers.length,httpAt);assert.equal(f.wire.length,wireAt);assert.equal(f.calls.length,callsAt);
+  assert.deepEqual(await effects(),before);
+ });
+ const extras={url:'https://at23-extra.example.invalid/forbidden',cmd:'at23-no-execute-command',path:'/at23-forbidden-path'},cases=[];
+ for(const method of ['materials','snapshot','start'])for(const [key,value] of Object.entries(extras)){
+  const id=method+'-'+key,base=method==='materials'?{}:method==='snapshot'?{ref:{...f.ref}}:
+   {sources:[{...f.ref}],goal:'AT23 forbidden extra parameter.',operationId:'at23-'+id};
+  cases.push({id,endpoint:'afos/drafts/'+method,payload:{...base,[key]:value}});
+ }
+ cases.push({id:'snapshot-source-path',endpoint:'afos/drafts/snapshot',payload:{ref:{...f.ref,path:extras.path}}},
+  {id:'start-source-path',endpoint:'afos/drafts/start',payload:{sources:[{...f.ref,path:extras.path}],goal:'AT23 nested source path.',operationId:'at23-start-source-path'}},
+  {id:'materials-unregistered-action',endpoint:'afos/drafts/materials',payload:{action:'at23-unregistered'}});
+ const witnesses=new Set();
+ for(const c of cases)await t.test(c.id,async()=>{
+  const before=await effects(),wireAt=f.wire.length,callsAt=f.calls.length,httpAt=f.httpTransfers.length;
+  const witness=f.stamp('/api/'+c.endpoint);assert.equal(witnesses.has(witness),false,c.id);witnesses.add(witness);
+  const response=await f.http(c.endpoint,c.payload,witness);assert.equal(response.status,200,c.id);
+  const result=(await response.json()).result;assert.equal(result.ok,false,c.id);assert.equal(result.error.code,'afos/drafts-operation-denied',c.id);
+  assert.equal(f.httpTransfers.length,httpAt+1,c.id);assert.deepEqual(f.httpTransfers[httpAt],{endpoint:c.endpoint,payload:c.payload},c.id);
+  const delta=f.wire.slice(wireAt),requests=delta.filter(x=>x.kind==='request'),admits=requests.filter(x=>x.method==='caller.admit');
+  assert.equal(admits.length,1,c.id);assert.deepEqual(admits[0].args.request,{witness,method:'POST',path:'/api/'+c.endpoint,authority:f.ready.authority},c.id);
+  const admitted=delta.find(x=>x.kind==='reply'&&x.method==='caller.admit'&&x.callId===admits[0].callId&&x.ok===true);assert.ok(admitted,c.id);
+  const freshness=requests.filter(x=>x.method==='caller.assert'&&x.args.leaseId===admitted.value.leaseId);
+  assert.ok(freshness.length>=2,c.id+': HTTP guard and Runtime pre-schema freshness');
+  // Original guard checks again after sending the response; that asynchronous tail is outside schema attribution.
+  for(const request of freshness.slice(0,2))assert.ok(delta.some(x=>x.kind==='reply'&&x.method==='caller.assert'&&x.callId===request.callId&&x.ok===true),c.id+': pre-schema freshness succeeded');
+  assert.deepEqual(requests.filter(x=>!['caller.admit','caller.assert','caller.release'].includes(x.method)),[],c.id+': no Main business dispatch');
+  const actions=f.calls.slice(callsAt);assert.ok(actions.length>0,c.id);assert.equal(actions.every(action=>action==='identity.current'),true,c.id);
+  assert.deepEqual(await effects(),before,c.id+': no measured business or execution effect');
+ });
+ console.log('AT23_VALID_EXTRA '+JSON.stringify({pid:f.ready.pid,knownValidProofCases:cases.length,issuerUnknownRefused:true,models:modelCalls,
+  mainBusinessDispatch:0,child:await f.childStats(),businessWrites:0,formalAT23:'NOT_RUN'}));
+});
 test('real original CLI cold finite business HTTP requires original auth and Main-issued one-use witness',{timeout:20000},async t=>{
  const f=await composed(t),before=f.calls.length;
  for(const endpoint of ['afos/drafts/state','afos/drafts/materials','afos/drafts/start','afos/drafts/archive','session/list']){const r=await f.http(endpoint);assert.equal(r.status,403);await r.arrayBuffer();}

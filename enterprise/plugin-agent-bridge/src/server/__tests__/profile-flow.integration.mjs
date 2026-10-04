@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { connect } from 'node:net';
-import { readdir } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { accountNamespace } from '../../../../../dsh-plugin-desktop/src/desktop-auth.ts';
 import { fixture } from './desktop-fixture.mjs';
 import { bootEnterpriseCore } from '../../../../../workdsh-web/packages/providers/enterprise-profile/dist/assembly.js';
 
@@ -30,8 +32,65 @@ async function composed(options={}){
   f.startHook(async(signal,layout,authority,business)=>{profileRoot=layout.profile;ctx=await bootEnterpriseCore({root:layout.profile,binding:authority.binding,projectId:authority.project.id,business,model:policy,signal});});
   await f.main.startHost();
   const invoke=(method,payload={})=>ctx.afosDraftRuntime.invoke(`afos/drafts/${method}`,payload,new AbortController().signal);
-  return {...f,ctx:()=>ctx,profileRoot:()=>profileRoot,requests,modelCalls:()=>modelCalls,invoke};
+ return {...f,ctx:()=>ctx,profileRoot:()=>profileRoot,requests,modelCalls:()=>modelCalls,invoke};
 }
+
+for(const outcome of ['success','invalid_grant'])for(const successor of ['logout','new-account'])
+ test('AT10 Main original Core late refresh '+outcome+' cannot affect '+successor,{timeout:20000},async()=>{
+  let armed=false,heldRequests=0,entered,release,drained;
+  const waiting=new Promise(resolve=>{entered=resolve;}),held=new Promise(resolve=>{release=resolve;}),bodyDrained=new Promise(resolve=>{drained=resolve;});
+  const f=await composed({shortTokens:true,tokenResponse:async init=>{
+   const params=new URLSearchParams(String(init.body));if(!armed||params.get('grant_type')!=='refresh_token')return undefined;
+   armed=false;heldRequests++;entered();await held;
+   const data=outcome==='success'?{access_token:'fixture-access',refresh_token:'late-alice-refresh',token_type:'Bearer',expires_in:3600,scope:'afos offline_access'}:{error:'invalid_grant'};
+   let chunk=0;const body=new ReadableStream({pull(controller){if(chunk++===0)controller.enqueue(new TextEncoder().encode(JSON.stringify(data)));else{controller.close();drained();}}});
+   return new Response(body,{status:outcome==='success'?200:400});
+  }});
+  const storage=[];const unobserve=f.main.observeCredentialStorage(()=>storage.push(f.main.credentialStorageState()));
+  let pending;const toolEffects={pre:0,execute:0,results:0,agentsCreated:0};
+  const observe=ctx=>{
+   ctx.on('agent/created',()=>{toolEffects.agentsCreated++;},{global:true});
+   ctx.on('tools/pre-execute',async(_exec,next)=>{toolEffects.pre++;return next();},{global:true,prepend:true});
+   ctx.on('tools/execute',async(_exec,next)=>{toolEffects.execute++;return next();},{global:true,prepend:true});
+   ctx.on('tools/result',()=>{toolEffects.results++;},{global:true});
+  };
+  const vaultBytes=async()=>Promise.all((await readdir(join(f.base,'vault'))).sort().map(async file=>({file,bytes:await readFile(join(f.base,'vault',file))})));
+  const tables=()=>Object.fromEntries(Object.entries(f.tables).map(([name,table])=>[name,structuredClone([...table])]));
+  try{
+   const old=f.business(),oldRuntime=f.ctx().afosDraftRuntime,authority=await old.currentAuthority(new AbortController().signal),
+    alice=accountNamespace(authority.binding.issuer,authority.binding.subject,authority.binding.organizationId,authority.binding.deviceId);
+   assert.equal(authority.binding.subject,'alice');observe(f.ctx());const originalAlice=await f.vault.load(alice);assert.ok(originalAlice);
+   armed=true;pending=Promise.allSettled([f.main.materials(),f.main.materials(),old.currentAuthority(new AbortController().signal)]);
+   await waiting;assert.equal(heldRequests,1);
+   let bob;
+   if(successor==='logout')await f.main.logout();
+   else{
+    f.principal('bob');await f.main.signIn();const next=await f.main.selectProject('p1');assert.equal(next.binding.subject,'bob');
+    bob=accountNamespace(next.binding.issuer,next.binding.subject,next.binding.organizationId,next.binding.deviceId);
+    await f.main.startHost();observe(f.ctx());assert.equal(f.ctx().agents.list().length,0);assert.equal(f.ctx().sessions.list().length,0);
+   }
+   const before={calls:f.calls.length,models:f.modelCalls(),starts:f.starts(),tables:tables(),vault:await vaultBytes(),storage:[...storage],tools:{...toolEffects},credential:f.main.credentialStorageState()};
+   release();await bodyDrained;await new Promise(resolve=>setImmediate(resolve));
+   const results=await pending;assert.equal(results.length,3);
+   for(const result of results){assert.equal(result.status,'rejected');assert.equal(result.reason.code,'broker/account-changed');}
+   assert.equal(f.calls.length,before.calls);assert.equal(f.modelCalls(),before.models);assert.equal(f.starts(),before.starts);
+   assert.deepEqual(tables(),before.tables);assert.deepEqual(await vaultBytes(),before.vault);assert.deepEqual(storage,before.storage);
+   assert.deepEqual(toolEffects,before.tools);assert.deepEqual(toolEffects,{pre:0,execute:0,results:0,agentsCreated:0});
+   assert.equal(f.main.credentialStorageState(),before.credential);assert.equal(heldRequests,1);
+   const oldReply=await oldRuntime.invoke('afos/drafts/materials',{},new AbortController().signal);
+   assert.equal(oldReply.ok,false);assert.equal(oldReply.error.code,'afos/profile-cancelled');
+   await assert.rejects(old.currentAuthority(new AbortController().signal),/enterprise\/(?:account|host)-changed/);
+   assert.equal(f.calls.length,before.calls);assert.deepEqual(tables(),before.tables);
+   if(successor==='logout'){
+    assert.equal(await f.vault.load(alice),undefined);assert.equal(f.main.credentialStorageState(),'signed-out');assert.equal(f.ctx(),undefined);
+    await assert.rejects(f.main.materials(),/enterprise\/select-project-required/);assert.equal(f.calls.length,before.calls);
+   }else{
+    assert.equal(await f.vault.load(alice),originalAlice);assert.ok(await f.vault.load(bob));
+    assert.equal((await f.main.currentAuthority()).binding.subject,'bob');assert.equal(f.ctx().agents.list().length,0);assert.equal(f.ctx().sessions.list().length,0);
+   }
+   console.log('AT10_MAIN_LATE '+JSON.stringify({outcome,successor,heldRefreshRequests:heldRequests,newModels:0,newTools:0,newAgents:0,newBusinessWrites:0,oldCredentialsNotRewritten:true,formalAT10:'NOT_RUN'}));
+  }finally{release();await pending;unobserve();await f.cleanup();}
+ });
 
 test('AFOS-CHECK-P16 Main fresh owned history grant survives completed execution publication without restoring a Run',async()=>{
   const f=await composed();try{
